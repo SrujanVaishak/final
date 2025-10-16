@@ -952,7 +952,7 @@ def monitor_price_live(symbol,entry,targets,sl,fakeout,thread_id):
 EXPIRIES = {
     "NIFTY": "20 OCT 2025",      # Updated as per your note
     "BANKNIFTY": "28 OCT 2025", 
-    "SENSEX": "16 OCT 2025",     # Updated as per your note
+    "SENSEX": "23 OCT 2025",     # Updated as per your note
     "FINNIFTY": "28 OCT 2025",  # CORRECTED: FINNIFTY has its own expiry
     "MIDCPNIFTY": "28 OCT 2025",
     "EICHERMOT": "28 OCT 2025",
