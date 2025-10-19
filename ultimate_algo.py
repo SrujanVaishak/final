@@ -1226,6 +1226,11 @@ def run_algo_parallel():
 
 # --------- START ---------
 
+# --------- START ---------
+STARTED_SENT = False
+STOP_SENT = False
+MARKET_CLOSED_SENT = False  # 🚨 ADD THIS VARIABLE
+
 while True:
     try:
         # Check if market is open
@@ -1245,10 +1250,11 @@ while True:
         # Market OPEN behavior - original logic
         if not STARTED_SENT:
             send_telegram("🚀 GIT ULTIMATE MASTER ALGO STARTED - All 8 Indices Running with CLEAN FIXES:\n"
-                         "✅ Removed EMA Crossover Restrictions\n"  
-                         "✅ Removed Volume Thresholds\n"
-                         "✅ Pure Price Action Focus\n"
-                         "✅ Institutional Momentum Confirmation")
+                         "✅ All 17 Strategies Running Simultaneously\n"  
+                         "✅ No Priority - Equal Weight to All Strategies\n"
+                         "✅ Strike Price Calculation for All Indices\n"
+                         "✅ Real-time CE/PE Detection\n"
+                         "✅ Parallel Processing for Maximum Speed")
             STARTED_SENT = True
             STOP_SENT = False
             MARKET_CLOSED_SENT = False  # Reset for next day
