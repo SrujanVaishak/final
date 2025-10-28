@@ -42,6 +42,44 @@ ACCUMULATION_VOLUME_RATIO = 2.0
 ACCUMULATION_PRICE_RANGE = 0.02
 ACCUMULATION_DAYS_LOOKBACK = 10
 
+# --------- EXPIRIES FOR ALL INDICES ---------
+EXPIRIES = {
+    "NIFTY": "28 OCT 2025",
+    "BANKNIFTY": "28 OCT 2025",
+    "SENSEX": "30 OCT 2025",
+    "FINNIFTY": "28 OCT 2025",
+    "MIDCPNIFTY": "28 OCT 2025",
+    "EICHERMOT": "28 OCT 2025",
+    "TRENT": "28 OCT 2025",
+    "RELIANCE": "28 OCT 2025"
+}
+
+# --------- STRATEGY TRACKING ---------
+STRATEGY_NAMES = {
+    "INSTITUTIONAL_PRICE_ACTION": "INSTITUTIONAL PRICE ACTION",
+    "OPENING_PLAY": "OPENING PLAY", 
+    "GAMMA_SQUEEZE": "GAMMA SQUEEZE",
+    "SMART_MONEY_DIVERGENCE": "SMART MONEY DIVERGENCE",
+    "STOP_HUNT": "STOP HUNT",
+    "INSTITUTIONAL_CONTINUATION": "INSTITUTIONAL CONTINUATION",
+    "PULLBACK_REVERSAL": "PULLBACK REVERSAL",
+    "ORDERFLOW_MIMIC": "ORDERFLOW MIMIC",
+    "VCP_PATTERN": "VCP PATTERN",
+    "FAULTY_BASES": "FAULTY BASES",
+    "WYCKOFF_SCHEMATIC": "WYCKOFF SCHEMATIC",
+    "LIQUIDITY_SWEEPS": "LIQUIDITY SWEEP",
+    "PEAK_REJECTION": "PEAK REJECTION",
+    "FAIR_VALUE_GAP": "FAIR VALUE GAP",
+    "VOLUME_GAP_IMBALANCE": "VOLUME GAP IMBALANCE",
+    "OTE_RETRACEMENT": "OTE RETRACEMENT",
+    "DEMAND_SUPPLY_ZONES": "DEMAND SUPPLY ZONES",
+    "BOTTOM_FISHING": "BOTTOM FISHING"
+}
+
+# Track all signals for end-of-day report
+daily_signals = []
+signal_counter = 0
+
 # --------- ANGEL ONE LOGIN ---------
 API_KEY = os.getenv("API_KEY")
 CLIENT_CODE = os.getenv("CLIENT_CODE")
@@ -377,17 +415,6 @@ def institutional_opening_play(index, df):
     return None
 
 # 🚨 LAYER 2: GAMMA SQUEEZE / EXPIRY LAYER 🚨
-EXPIRIES = {
-    "NIFTY": "20 OCT 2025",
-    "BANKNIFTY": "16 OCT 2025",
-    "SENSEX": "16 OCT 2025",
-    "FINNIFTY": "16 OCT 2025",
-    "MIDCPNIFTY": "16 OCT 2025",
-    "EICHERMOT": "31 OCT 2025",
-    "TRENT": "31 OCT 2025",
-    "RELIANCE": "28 OCT 2025"
-}
-
 def is_expiry_day_for_index(index):
     try:
         ex = EXPIRIES.get(index)
@@ -926,7 +953,7 @@ def analyze_index_signal(index):
     # Return first valid signal (all strategies have equal priority)
     if valid_signals:
         strategy_name, signal = valid_signals[0]
-        return signal, df5, False
+        return signal, df5, False, strategy_name  # 🚨 ADDED STRATEGY NAME
 
     return None
 
@@ -1025,16 +1052,33 @@ def institutional_flow_confirm(index, base_signal, df5):
 
     return True
 
-# 🚨 FIXED: SEPARATE THREAD MONITORING 🚨
-def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id):
+# --------- TRADE MONITORING AND TRACKING ---------
+active_trades = {}
+
+def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_name, signal_data):
     """Run monitoring in separate thread without blocking main signal generation"""
     def monitoring_thread():
+        global daily_signals
+        
         last_high = entry
         weakness_sent = False
         in_trade = False
+        entry_price_achieved = False
+        max_price_reached = entry
+        targets_hit = [False] * len(targets)
         
         while True:
             if should_stop_trading():
+                # Update signal data before stopping
+                signal_data.update({
+                    "entry_status": "NOT_ENTERED" if not entry_price_achieved else "ENTERED",
+                    "targets_hit": sum(targets_hit),
+                    "max_price_reached": max_price_reached,
+                    "zero_targets": sum(targets_hit) == 0,
+                    "no_new_highs": max_price_reached <= entry,
+                    "final_pnl": calculate_pnl(entry, max_price_reached, targets_hit, sl)
+                })
+                daily_signals.append(signal_data)
                 send_telegram(f"🛑 Market closed - Stopping monitoring for {symbol}", reply_to=thread_id)
                 break
                 
@@ -1045,11 +1089,18 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id):
                 
             price = round(price)
             
+            # Track max price reached
+            if price > max_price_reached:
+                max_price_reached = price
+            
             if not in_trade:
                 if price >= entry:
                     send_telegram(f"✅ ENTRY TRIGGERED at {price}", reply_to=thread_id)
                     in_trade = True
+                    entry_price_achieved = True
                     last_high = price
+                    # Update signal data
+                    signal_data["entry_status"] = "ENTERED"
             else:
                 if price > last_high:
                     send_telegram(f"🚀 {symbol} making new high → {price}", reply_to=thread_id)
@@ -1060,17 +1111,35 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id):
                 
                 # Check all targets
                 for i, target in enumerate(targets):
-                    if price >= target:
+                    if price >= target and not targets_hit[i]:
                         send_telegram(f"🎯 {symbol}: Target {i+1} hit at ₹{target}", reply_to=thread_id)
-                        break
+                        targets_hit[i] = True
                 
                 if price <= sl:
                     send_telegram(f"🔗 {symbol}: Stop Loss {sl} hit. Exit trade.", reply_to=thread_id)
+                    # Update final signal data
+                    signal_data.update({
+                        "targets_hit": sum(targets_hit),
+                        "max_price_reached": max_price_reached,
+                        "zero_targets": sum(targets_hit) == 0,
+                        "no_new_highs": max_price_reached <= entry,
+                        "final_pnl": calculate_pnl(entry, max_price_reached, targets_hit, sl)
+                    })
+                    daily_signals.append(signal_data)
                     break
                     
                 # If all targets hit, exit
-                if all(price >= target for target in targets):
+                if all(targets_hit):
                     send_telegram(f"🏆 {symbol}: ALL TARGETS HIT! Trade completed successfully!", reply_to=thread_id)
+                    # Update final signal data
+                    signal_data.update({
+                        "targets_hit": len(targets),
+                        "max_price_reached": max_price_reached,
+                        "zero_targets": False,
+                        "no_new_highs": False,
+                        "final_pnl": calculate_pnl(entry, max_price_reached, targets_hit, sl)
+                    })
+                    daily_signals.append(signal_data)
                     break
             
             time.sleep(10)
@@ -1080,58 +1149,103 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id):
     thread.daemon = True
     thread.start()
 
-# --------- EXPIRY CONFIG FOR ALL INDICES ---------
-EXPIRIES = {
-    "NIFTY": "20 OCT 2025",
-    "BANKNIFTY": "28 OCT 2025", 
-    "SENSEX": "23 OCT 2025",
-    "FINNIFTY": "28 OCT 2025",
-    "MIDCPNIFTY": "28 OCT 2025",
-    "EICHERMOT": "28 OCT 2025",
-    "TRENT": "28 OCT 2025", 
-    "RELIANCE": "28 OCT 2025"
-}
-
-# 🚨 FIXED: ALLOW MULTIPLE TRADES PER INDEX 🚨
-active_trades = {}
-
-# --------- THREAD FUNCTION ---------
-def trade_thread(index):
-    """Generate signals without blocking on active trades"""
-    sig = analyze_index_signal(index)
-    side = None
-    fakeout = False
-    df = None
+def calculate_pnl(entry, max_price, targets_hit, sl):
+    """Calculate P&L based on targets hit and max price reached"""
+    if max_price <= sl:
+        return f"-{entry - sl}"
     
-    if sig: 
-        if isinstance(sig, tuple) and len(sig) == 3:
-            side, df, fakeout = sig
-        elif isinstance(sig, tuple) and len(sig) == 2:
-            side, df = sig
-            fakeout = False
+    targets_achieved = sum(targets_hit)
+    if targets_achieved == 0:
+        if max_price > entry:
+            return f"+{max_price - entry}"
         else:
-            side = sig
+            return "0"
+    
+    # Calculate average target price for achieved targets
+    achieved_prices = [target for i, target in enumerate(targets) if targets_hit[i]]
+    avg_exit = sum(achieved_prices) / len(achieved_prices)
+    return f"+{avg_exit - entry}"
 
-    df5 = fetch_index_data(index, "5m", "2d")
-    inst_signal = institutional_flow_signal(index, df5) if df5 is not None else None
-    oi_signal = oi_delta_flow_signal(index)
-    final_signal = oi_signal or inst_signal or side
+# --------- NEW READABLE END OF DAY REPORT ---------
+def generate_end_of_day_report():
+    """Generate comprehensive end-of-day report in readable format"""
+    if not daily_signals:
+        return "📊 END OF DAY REPORT\nNo signals generated today."
+    
+    report = "📊 GIT ULTIMATE MASTER - END OF DAY REPORT\n\n"
+    report += f"📅 Date: {datetime.now().strftime('%d-%b-%Y')}\n"
+    report += f"📈 Total Signals: {len(daily_signals)}\n"
+    report += "=" * 50 + "\n\n"
+    
+    total_pnl = 0
+    successful_trades = 0
+    
+    for i, signal in enumerate(daily_signals, 1):
+        report += f"🔰 SIGNAL #{i}\n"
+        report += f"   • Timestamp: {signal['timestamp']}\n"
+        report += f"   • Index: {signal['index']}\n"
+        report += f"   • Strike: {signal['strike']}\n"
+        report += f"   • Type: {signal['option_type']}\n"
+        report += f"   • Strategy: {signal['strategy']}\n"
+        report += f"   • Entry Price: ₹{signal['entry_price']}\n"
+        report += f"   • Target 1: ₹{signal['targets'][0]}\n"
+        report += f"   • Target 2: ₹{signal['targets'][1]}\n"
+        report += f"   • Target 3: ₹{signal['targets'][2]}\n"
+        report += f"   • Target 4: ₹{signal['targets'][3]}\n"
+        report += f"   • Stop Loss: ₹{signal['sl']}\n"
+        report += f"   • Fakeout: {signal['fakeout']}\n"
+        report += f"   • Index Price: {signal['index_price']}\n"
+        report += f"   • Entry Status: {signal.get('entry_status', 'PENDING')}\n"
+        report += f"   • Targets Hit: {signal.get('targets_hit', 0)}/4\n"
+        report += f"   • Max Price Reached: ₹{signal.get('max_price_reached', signal['entry_price'])}\n"
+        report += f"   • Zero Targets Hit: {'Yes' if signal.get('zero_targets', True) else 'No'}\n"
+        report += f"   • No New Highs: {'Yes' if signal.get('no_new_highs', True) else 'No'}\n"
+        report += f"   • Final P&L: {signal.get('final_pnl', '0')}\n"
+        report += f"   • Signal ID: {signal['signal_id']}\n"
+        report += "-" * 40 + "\n\n"
+        
+        # Calculate P&L for summary
+        pnl_str = signal.get("final_pnl", "0")
+        try:
+            if pnl_str.startswith("+"):
+                total_pnl += float(pnl_str[1:])
+                successful_trades += 1
+            elif pnl_str.startswith("-"):
+                total_pnl -= float(pnl_str[1:])
+        except:
+            pass
+    
+    # Summary Section
+    report += "📈 SUMMARY\n"
+    report += "=" * 30 + "\n"
+    report += f"• Total Signals: {len(daily_signals)}\n"
+    report += f"• Successful Trades: {successful_trades}\n"
+    report += f"• Success Rate: {(successful_trades/len(daily_signals))*100:.1f}%\n"
+    report += f"• Total P&L: ₹{total_pnl:+.2f}\n\n"
+    
+    # Strategy Performance
+    strategy_stats = {}
+    for signal in daily_signals:
+        strat = signal['strategy']
+        if strat not in strategy_stats:
+            strategy_stats[strat] = {'count': 0, 'success': 0}
+        strategy_stats[strat]['count'] += 1
+        pnl = signal.get("final_pnl", "0")
+        if pnl.startswith("+"):
+            strategy_stats[strat]['success'] += 1
+    
+    report += "🎯 STRATEGY PERFORMANCE\n"
+    report += "=" * 30 + "\n"
+    for strat, stats in strategy_stats.items():
+        success_rate = (stats['success']/stats['count'])*100 if stats['count'] > 0 else 0
+        report += f"• {strat}: {stats['count']} signals, {success_rate:.1f}% success rate\n"
+    
+    return report
 
-    if final_signal == "BOTH":
-        for s in ["CE", "PE"]:
-            if institutional_flow_confirm(index, s, df5):
-                send_signal(index, s, df, fakeout)
-        return
-    elif final_signal:
-        if df is None: 
-            df = df5
-        if institutional_flow_confirm(index, final_signal, df5):
-            send_signal(index, final_signal, df, fakeout)
-    else:
-        return
-
-# 🚨 FIXED: INSTITUTIONAL ENTRY PRICE & CONFIRMED TARGETS 🚨
-def send_signal(index, side, df, fakeout):
+# --------- UPDATED SIGNAL SENDING WITH STRATEGY TRACKING ---------
+def send_signal(index, side, df, fakeout, strategy_key):
+    global signal_counter
+    
     # Get ACTUAL index price where pattern was detected
     signal_detection_price = float(ensure_series(df["Close"]).iloc[-1])
     
@@ -1158,34 +1272,63 @@ def send_signal(index, side, df, fakeout):
     close = ensure_series(df["Close"])
     atr = float(ta.volatility.AverageTrueRange(high, low, close, 14).average_true_range().iloc[-1])
     
-    # 🚨 CONFIRMED SMALL TARGETS (like in your image)
-    atr_multiplier = 0.3  # Smaller multiplier for confirmed targets
+    # 🚨 CONFIRMED SMALL TARGETS
+    atr_multiplier = 0.3
     base_target = option_price
     
-    # Progressive small targets (155→170→200→220 style)
+    # Progressive small targets
     targets = [
-        round(base_target + (atr * atr_multiplier * 1.0)),  # Quick scalp
-        round(base_target + (atr * atr_multiplier * 1.5)),  # Momentum target
-        round(base_target + (atr * atr_multiplier * 2.2)),  # Swing target  
-        round(base_target + (atr * atr_multiplier * 3.0))   # Runner target
+        round(base_target + (atr * atr_multiplier * 1.0)),
+        round(base_target + (atr * atr_multiplier * 1.5)),
+        round(base_target + (atr * atr_multiplier * 2.2)),
+        round(base_target + (atr * atr_multiplier * 3.0))
     ]
     
     # Stop Loss
     sl = round(option_price - (atr * 0.8))
     
-    # Format targets like in your image: 155//170//200//220++
+    # Format targets
     targets_str = "//".join(str(t) for t in targets) + "++"
     
-    # 🚨 FINAL SIGNAL FORMAT AS REQUESTED 🚨
-    msg = (f"{index} {strike}\n"
+    # Get strategy name
+    strategy_name = STRATEGY_NAMES.get(strategy_key, strategy_key.upper())
+    
+    # Create signal data for tracking
+    signal_id = f"SIG{signal_counter:04d}"
+    signal_counter += 1
+    
+    signal_data = {
+        "signal_id": signal_id,
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "index": index,
+        "strike": strike,
+        "option_type": side,  # 🚨 NOW INCLUDES CE/PE
+        "strategy": strategy_name,
+        "entry_price": entry,
+        "targets": targets,
+        "sl": sl,
+        "fakeout": fakeout,
+        "index_price": signal_detection_price,
+        "entry_status": "PENDING",
+        "targets_hit": 0,
+        "max_price_reached": entry,
+        "zero_targets": True,
+        "no_new_highs": True,
+        "final_pnl": "0"
+    }
+    
+    # 🚨 FIXED SIGNAL FORMAT - NOW INCLUDES CE/PE
+    msg = (f"{index} {strike} {side}\n"  # 🚨 ADDED CE/PE
            f"ABOVE {entry}\n"
            f"TARGETS: {targets_str}\n"
            f"SL: {sl}\n"
-           f"FAKEOUT: {'YES' if fakeout else 'NO'}")
+           f"FAKEOUT: {'YES' if fakeout else 'NO'}\n"
+           f"STRATEGY: {strategy_name}\n"  # 🚨 ADDED STRATEGY
+           f"SIGNAL ID: {signal_id}")  # 🚨 ADDED SIGNAL ID
          
     thread_id = send_telegram(msg)
     
-    # Store trade info without blocking
+    # Store trade info
     trade_id = f"{symbol}_{int(time.time())}"
     active_trades[trade_id] = {
         "symbol": symbol, 
@@ -1194,11 +1337,46 @@ def send_signal(index, side, df, fakeout):
         "targets": targets, 
         "thread": thread_id, 
         "status": "OPEN",
-        "index": index
+        "index": index,
+        "signal_data": signal_data
     }
     
-    # Start monitoring in SEPARATE thread (non-blocking)
-    monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id)
+    # Start monitoring in SEPARATE thread
+    monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_name, signal_data)
+
+# --------- UPDATED TRADE THREAD ---------
+def trade_thread(index):
+    """Generate signals without blocking on active trades"""
+    result = analyze_index_signal(index)
+    
+    if not result:
+        return
+        
+    # Unpack result with strategy
+    if len(result) == 4:
+        side, df, fakeout, strategy_key = result  # 🚨 NOW GETS STRATEGY
+    else:
+        # Fallback for old format
+        side, df, fakeout = result
+        strategy_key = "UNKNOWN"
+    
+    df5 = fetch_index_data(index, "5m", "2d")
+    inst_signal = institutional_flow_signal(index, df5) if df5 is not None else None
+    oi_signal = oi_delta_flow_signal(index)
+    final_signal = oi_signal or inst_signal or side
+
+    if final_signal == "BOTH":
+        for s in ["CE", "PE"]:
+            if institutional_flow_confirm(index, s, df5):
+                send_signal(index, s, df, fakeout, strategy_key)
+        return
+    elif final_signal:
+        if df is None: 
+            df = df5
+        if institutional_flow_confirm(index, final_signal, df5):
+            send_signal(index, final_signal, df, fakeout, strategy_key)
+    else:
+        return
 
 # --------- MAIN LOOP (ALL INDICES PARALLEL) ---------
 def run_algo_parallel():
@@ -1209,6 +1387,9 @@ def run_algo_parallel():
     if should_stop_trading():
         global STOP_SENT
         if not STOP_SENT:
+            # Generate end of day report
+            report = generate_end_of_day_report()
+            send_telegram(report)
             send_telegram("🛑 Market closed at 3:30 PM IST - Algorithm stopped")
             STOP_SENT = True
         return
@@ -1225,11 +1406,9 @@ def run_algo_parallel():
         t.join()
 
 # --------- START ---------
-
-# --------- START ---------
 STARTED_SENT = False
 STOP_SENT = False
-MARKET_CLOSED_SENT = False  # 🚨 ADD THIS VARIABLE
+MARKET_CLOSED_SENT = False
 
 while True:
     try:
@@ -1249,22 +1428,27 @@ while True:
         
         # Market OPEN behavior - original logic
         if not STARTED_SENT:
-            send_telegram("🚀 GIT ULTIMATE MASTER ALGO STARTED - All 8 Indices Running with CLEAN FIXES:\n"
-                         "✅ All 17 Strategies Running Simultaneously\n"  
-                         "✅ No Priority - Equal Weight to All Strategies\n"
-                         "✅ Strike Price Calculation for All Indices\n"
-                         "✅ Real-time CE/PE Detection\n"
-                         "✅ Parallel Processing for Maximum Speed")
+            send_telegram("🚀 GIT ULTIMATE MASTER ALGO STARTED - All 8 Indices Running with COMPLETE REPORTING:\n"
+                         "✅ CE/PE Identification in Every Signal\n"
+                         "✅ Strategy Name Tracking\n"  
+                         "✅ End-of-Day Performance Report\n"
+                         "✅ Max Price Reached Tracking\n"
+                         "✅ Real-time Trade Monitoring")
             STARTED_SENT = True
             STOP_SENT = False
             MARKET_CLOSED_SENT = False  # Reset for next day
             
         if should_stop_trading():
             if not STOP_SENT:
+                # Generate final report before stopping
+                report = generate_end_of_day_report()
+                send_telegram(report)
                 send_telegram("🛑 Market closing time reached - Algorithm stopped automatically")
                 STOP_SENT = True
                 STARTED_SENT = False
-            break
+            # Don't break, just sleep until next day
+            time.sleep(60)
+            continue
             
         # Run the main algorithm
         run_algo_parallel()
