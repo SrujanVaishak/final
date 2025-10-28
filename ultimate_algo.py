@@ -77,9 +77,39 @@ STRATEGY_NAMES = {
     "liquidity_zone": "LIQUIDITY ZONE"
 }
 
-# Track all signals for end-of-day report
-daily_signals = []
+# --------- ENHANCED TRACKING FOR REPORTS ---------
+all_generated_signals = []  # Track ALL signals for EOD reporting
+strategy_performance = {}
 signal_counter = 0
+daily_signals = []
+
+def initialize_strategy_tracking():
+    """Initialize strategy performance tracking"""
+    global strategy_performance
+    strategy_performance = {
+        "INSTITUTIONAL PRICE ACTION": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "OPENING PLAY": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "GAMMA SQUEEZE": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "LIQUIDITY SWEEP": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "WYCKOFF SCHEMATIC": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "VCP PATTERN": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "FAULTY BASES": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "PEAK REJECTION": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "SMART MONEY DIVERGENCE": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "STOP HUNT": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "INSTITUTIONAL CONTINUATION": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "FAIR VALUE GAP": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "VOLUME GAP IMBALANCE": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "OTE RETRACEMENT": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "DEMAND SUPPLY ZONES": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "PULLBACK REVERSAL": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "ORDERFLOW MIMIC": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "BOTTOM FISHING": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "LIQUIDITY ZONE": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0}
+    }
+
+# Initialize tracking
+initialize_strategy_tracking()
 
 # --------- ANGEL ONE LOGIN ---------
 API_KEY = os.getenv("API_KEY")
@@ -98,6 +128,8 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 STARTED_SENT = False
 STOP_SENT = False
+MARKET_CLOSED_SENT = False
+EOD_REPORT_SENT = False
 
 def send_telegram(msg, reply_to=None):
     try:
@@ -923,7 +955,7 @@ def analyze_index_signal(index):
     institutional_pa_signal = institutional_price_action_signal(df5)
     if institutional_pa_signal:
         if institutional_momentum_confirmation(index, df5, institutional_pa_signal):
-            return institutional_pa_signal, df5, False
+            return institutional_pa_signal, df5, False, "INSTITUTIONAL PRICE ACTION"
 
     # 🚨 LAYER 0: OPENING-PLAY PRIORITY 🚨
     try:
@@ -941,7 +973,7 @@ def analyze_index_signal(index):
                     if op_sig == "PE" and last_close <= low_zone: fakeout = True
                 except:
                     fakeout = False
-                return op_sig, df5, fakeout
+                return op_sig, df5, fakeout, "OPENING PLAY"
     except Exception:
         pass
 
@@ -955,9 +987,9 @@ def analyze_index_signal(index):
                 cand = gamma['side']
                 oi_flow = oi_delta_flow_signal(index)
                 if institutional_flow_confirm(index, cand, df5):
-                    return cand, df5, False
+                    return cand, df5, False, "GAMMA SQUEEZE"
                 if gamma['confidence'] > 0.6 and oi_flow == cand:  # Increased confidence threshold
-                    return cand, df5, False
+                    return cand, df5, False, "GAMMA SQUEEZE"
     except Exception:
         pass
 
@@ -965,97 +997,97 @@ def analyze_index_signal(index):
     sweep_sig = detect_liquidity_sweeps(df5)
     if sweep_sig:
         if institutional_momentum_confirmation(index, df5, sweep_sig):
-            return sweep_sig, df5, True
+            return sweep_sig, df5, True, "LIQUIDITY SWEEP"
 
     # 🚨 LAYER 3: WYCKOFF SCHEMATICS 🚨
     wyckoff_sig = detect_wyckoff_schematic(df5)
     if wyckoff_sig:
         if institutional_momentum_confirmation(index, df5, wyckoff_sig):
-            return wyckoff_sig, df5, False
+            return wyckoff_sig, df5, False, "WYCKOFF SCHEMATIC"
 
     # 🚨 LAYER 4: VCP PATTERN 🚨
     vcp_sig = detect_vcp_pattern(df5)
     if vcp_sig:
         if institutional_momentum_confirmation(index, df5, vcp_sig):
-            return vcp_sig, df5, False
+            return vcp_sig, df5, False, "VCP PATTERN"
 
     # 🚨 LAYER 5: FAULTY BASES 🚨
     faulty_sig = detect_faulty_bases(df5)
     if faulty_sig:
         if institutional_momentum_confirmation(index, df5, faulty_sig):
-            return faulty_sig, df5, True
+            return faulty_sig, df5, True, "FAULTY BASES"
 
     # 🚨 LAYER 6: PEAK REJECTION 🚨
     peak_sig = detect_peak_rejection(df5)
     if peak_sig:
         if institutional_momentum_confirmation(index, df5, peak_sig):
-            return peak_sig, df5, True
+            return peak_sig, df5, True, "PEAK REJECTION"
 
     # 🚨 LAYER 7: SMART-MONEY DIVERGENCE 🚨
     sm_sig = smart_money_divergence(df5)
     if sm_sig:
         if institutional_momentum_confirmation(index, df5, sm_sig):
-            return sm_sig, df5, False
+            return sm_sig, df5, False, "SMART MONEY DIVERGENCE"
 
     # 🚨 LAYER 8: STOP-HUNT DETECTOR 🚨
     stop_sig = detect_stop_hunt(df5)
     if stop_sig:
         if institutional_momentum_confirmation(index, df5, stop_sig):
-            return stop_sig, df5, True
+            return stop_sig, df5, True, "STOP HUNT"
 
     # 🚨 LAYER 9: INSTITUTIONAL CONTINUATION 🚨
     cont_sig = detect_institutional_continuation(df5)
     if cont_sig:
         if institutional_flow_confirm(index, cont_sig, df5):
-            return cont_sig, df5, False
+            return cont_sig, df5, False, "INSTITUTIONAL CONTINUATION"
 
     # 🚨 LAYER 10: FAIR VALUE GAP 🚨
     fvg_sig = detect_fair_value_gap(df5)
     if fvg_sig:
         if institutional_momentum_confirmation(index, df5, fvg_sig):
-            return fvg_sig, df5, False
+            return fvg_sig, df5, False, "FAIR VALUE GAP"
 
     # 🚨 LAYER 11: VOLUME GAP IMBALANCE 🚨
     volume_sig = detect_volume_gap_imbalance(df5)
     if volume_sig:
         if institutional_momentum_confirmation(index, df5, volume_sig):
-            return volume_sig, df5, False
+            return volume_sig, df5, False, "VOLUME GAP IMBALANCE"
 
     # 🚨 LAYER 12: OTE RETRACEMENT 🚨
     ote_sig = detect_ote_retracement(df5)
     if ote_sig:
         if institutional_momentum_confirmation(index, df5, ote_sig):
-            return ote_sig, df5, False
+            return ote_sig, df5, False, "OTE RETRACEMENT"
 
     # 🚨 LAYER 13: DEMAND & SUPPLY ZONES 🚨
     ds_sig = detect_demand_supply_zones(df5)
     if ds_sig:
         if institutional_momentum_confirmation(index, df5, ds_sig):
-            return ds_sig, df5, False
+            return ds_sig, df5, False, "DEMAND SUPPLY ZONES"
 
     # 🚨 LAYER 14: PULLBACK REVERSAL 🚨
     pull_sig = detect_pullback_reversal(df5)
     if pull_sig:
         if institutional_momentum_confirmation(index, df5, pull_sig):
-            return pull_sig, df5, False
+            return pull_sig, df5, False, "PULLBACK REVERSAL"
 
     # 🚨 LAYER 15: ORDERFLOW MIMIC 🚨
     flow_sig = mimic_orderflow_logic(df5)
     if flow_sig:
         if institutional_momentum_confirmation(index, df5, flow_sig):
-            return flow_sig, df5, False
+            return flow_sig, df5, False, "ORDERFLOW MIMIC"
 
     # 🚨 LAYER 16: BOTTOM-FISHING 🚨
     bottom_sig = detect_bottom_fishing(index, df5)
     if bottom_sig:
         if institutional_momentum_confirmation(index, df5, bottom_sig):
-            return bottom_sig, df5, False
+            return bottom_sig, df5, False, "BOTTOM FISHING"
 
     # Final fallback: Liquidity-based entry
     bull_liq, bear_liq = institutional_liquidity_hunt(index, df5)
     liquidity_side = liquidity_zone_entry_check(last_close, bull_liq, bear_liq)
     if liquidity_side:
-        return liquidity_side, df5, False
+        return liquidity_side, df5, False, "LIQUIDITY ZONE"
 
     return None
 
@@ -1154,22 +1186,32 @@ def institutional_flow_confirm(index, base_signal, df5):
 
     return True
 
-# --------- TRADE MONITORING AND TRACKING ---------
+# --------- ENHANCED TRADE MONITORING AND TRACKING ---------
 active_trades = {}
 
-def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id):
+def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_name, signal_id):
     """Run monitoring in separate thread without blocking main signal generation"""
     def monitoring_thread():
-        global daily_signals
+        global daily_signals, strategy_performance
         
         last_high = entry
         weakness_sent = False
         in_trade = False
         entry_price_achieved = False
         max_price_reached = entry
+        targets_hit = []
+        final_pnl = 0
         
         while True:
             if should_stop_trading():
+                # Update signal data before closing
+                for signal in daily_signals:
+                    if signal['signal_id'] == signal_id:
+                        signal['max_price_reached'] = max_price_reached
+                        signal['targets_hit'] = targets_hit
+                        signal['final_pnl'] = final_pnl
+                        signal['entry_achieved'] = entry_price_achieved
+                        break
                 send_telegram(f"🛑 Market closed - Stopping monitoring for {symbol}", reply_to=thread_id)
                 break
                 
@@ -1190,6 +1232,12 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id):
                     in_trade = True
                     entry_price_achieved = True
                     last_high = price
+                    
+                    # Update signal data
+                    for signal in daily_signals:
+                        if signal['signal_id'] == signal_id:
+                            signal['entry_achieved'] = True
+                            break
             else:
                 if price > last_high:
                     send_telegram(f"🚀 {symbol} making new high → {price}", reply_to=thread_id)
@@ -1200,59 +1248,154 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id):
                 
                 # Check all targets
                 for i, target in enumerate(targets):
-                    if price >= target:
+                    if price >= target and target not in targets_hit:
+                        targets_hit.append(target)
                         send_telegram(f"🎯 {symbol}: Target {i+1} hit at ₹{target}", reply_to=thread_id)
-                        break
+                        
+                        # Update P&L
+                        final_pnl = max_price_reached - entry
                 
                 if price <= sl:
                     send_telegram(f"🔗 {symbol}: Stop Loss {sl} hit. Exit trade.", reply_to=thread_id)
+                    final_pnl = sl - entry  # Negative P&L
                     break
                     
                 # If all targets hit, exit
-                if all(price >= target for target in targets):
+                if all(target in targets_hit for target in targets):
                     send_telegram(f"🏆 {symbol}: ALL TARGETS HIT! Trade completed successfully!", reply_to=thread_id)
+                    final_pnl = targets[-1] - entry  # Max P&L
+                    break
+            
+            # Update signal data continuously
+            for signal in daily_signals:
+                if signal['signal_id'] == signal_id:
+                    signal['max_price_reached'] = max_price_reached
+                    signal['targets_hit'] = targets_hit
+                    signal['final_pnl'] = final_pnl
                     break
             
             time.sleep(10)
+        
+        # Final update after trade completion
+        for signal in daily_signals:
+            if signal['signal_id'] == signal_id:
+                signal['max_price_reached'] = max_price_reached
+                signal['targets_hit'] = targets_hit
+                signal['final_pnl'] = final_pnl
+                signal['trade_completed'] = True
+                
+                # Update strategy performance
+                targets_hit_count = len(targets_hit)
+                if targets_hit_count >= 2:
+                    strategy_performance[strategy_name]["success_2_targets"] += 1
+                if targets_hit_count >= 3:
+                    strategy_performance[strategy_name]["success_3_4_targets"] += 1
+                
+                strategy_performance[strategy_name]["total_pnl"] += final_pnl
+                break
     
     # Start monitoring in separate thread
     thread = threading.Thread(target=monitoring_thread)
     thread.daemon = True
     thread.start()
 
-# --------- NEW READABLE END OF DAY REPORT ---------
-def generate_end_of_day_report():
-    """Generate comprehensive end-of-day report in readable format"""
+# --------- ENHANCED REPORTING FUNCTIONS ---------
+def send_individual_signal_reports():
+    """Send individual signal reports in separate messages"""
     if not daily_signals:
-        return "📊 END OF DAY REPORT\nNo signals generated today."
+        send_telegram("📊 END OF DAY REPORT: No signals generated today.")
+        return
     
-    report = "📊 GIT ULTIMATE MASTER - END OF DAY REPORT\n\n"
-    report += f"📅 Date: {datetime.now().strftime('%d-%b-%Y')}\n"
-    report += f"📈 Total Signals: {len(daily_signals)}\n"
-    report += "=" * 50 + "\n\n"
+    send_telegram(f"📊 END OF DAY REPORT - {datetime.now().strftime('%d-%b-%Y')}")
+    send_telegram(f"📈 Total Signals: {len(daily_signals)}")
     
     for i, signal in enumerate(daily_signals, 1):
-        report += f"🔰 SIGNAL #{i}\n"
-        report += f"   • Timestamp: {signal['timestamp']}\n"
-        report += f"   • Index: {signal['index']}\n"
-        report += f"   • Strike: {signal['strike']}\n"
-        report += f"   • Type: {signal['option_type']}\n"
-        report += f"   • Entry Price: ₹{signal['entry_price']}\n"
-        report += f"   • Target 1: ₹{signal['targets'][0]}\n"
-        report += f"   • Target 2: ₹{signal['targets'][1]}\n"
-        report += f"   • Target 3: ₹{signal['targets'][2]}\n"
-        report += f"   • Target 4: ₹{signal['targets'][3]}\n"
-        report += f"   • Stop Loss: ₹{signal['sl']}\n"
-        report += f"   • Fakeout: {signal['fakeout']}\n"
-        report += f"   • Index Price: {signal['index_price']}\n"
-        report += f"   • Max Price Reached: ₹{signal.get('max_price_reached', signal['entry_price'])}\n"
-        report += f"   • Signal ID: {signal['signal_id']}\n"
-        report += "-" * 40 + "\n\n"
-    
-    return report
+        targets_hit = signal.get('targets_hit', [])
+        targets_hit_count = len(targets_hit)
+        max_price = signal.get('max_price_reached', signal['entry_price'])
+        final_pnl = signal.get('final_pnl', 0)
+        entry_achieved = signal.get('entry_achieved', False)
+        
+        report = f"""
+🔰 SIGNAL #{i} - {signal['index']} {signal['strike']} {signal['option_type']}
+─────────────────────────────
+📅 Date: {datetime.now().strftime('%d-%b-%Y')}
+🕒 Time: {signal['timestamp']}
+📈 Index: {signal['index']}
+🎯 Strike: {signal['strike']}
+🔰 Type: {signal['option_type']}
+🏷️ Strategy: {signal.get('strategy', 'UNKNOWN')}
 
-# 🚨 FIXED: INSTITUTIONAL ENTRY PRICE & CONFIRMED TARGETS 🚨
-def send_signal(index, side, df, fakeout):
+💰 ENTRY: ₹{signal['entry_price']}
+🎯 TARGETS: {signal['targets'][0]} // {signal['targets'][1]} // {signal['targets'][2]} // {signal['targets'][3]}
+🛑 STOP LOSS: ₹{signal['sl']}
+🚨 FAKEOUT: {signal['fakeout']}
+
+📊 PERFORMANCE:
+• Entry Status: {'ENTERED' if entry_achieved else 'NOT ENTERED'}
+• Targets Hit: {targets_hit_count}/4
+• Targets Achieved: {', '.join(map(str, targets_hit)) if targets_hit else 'None'}
+• Max Price Reached: ₹{max_price}
+• Final P&L: {final_pnl:+.2f} points
+─────────────────────────────
+"""
+        send_telegram(report)
+
+def send_strategy_performance_summary():
+    """Send strategy-wise performance summary"""
+    if not any(stats["total"] > 0 for stats in strategy_performance.values()):
+        return
+    
+    summary = "🎯 STRATEGY PERFORMANCE BREAKDOWN\n"
+    summary += "─────────────────────────────\n"
+    
+    for strategy, stats in strategy_performance.items():
+        if stats["total"] > 0:
+            success_rate_2 = (stats["success_2_targets"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+            success_rate_3_4 = (stats["success_3_4_targets"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+            
+            summary += f"📊 {strategy}:\n"
+            summary += f"   • Signals: {stats['total']}\n"
+            summary += f"   • Success Rate (2+ targets): {success_rate_2:.1f}%\n"
+            summary += f"   • 2+ Targets Hit: {stats['success_2_targets']} ({success_rate_2:.1f}%)\n"
+            summary += f"   • 3-4 Targets Hit: {stats['success_3_4_targets']} ({success_rate_3_4:.1f}%)\n"
+            summary += f"   • Total P&L: ₹{stats['total_pnl']:+.2f}\n"
+            summary += "   ─────────────────────────────\n"
+    
+    send_telegram(summary)
+
+def send_end_of_day_reports():
+    """Send all end-of-day reports"""
+    send_telegram("📊 GENERATING END OF DAY REPORTS...")
+    time.sleep(2)
+    
+    # Send individual signal reports
+    send_individual_signal_reports()
+    time.sleep(2)
+    
+    # Send strategy performance summary
+    send_strategy_performance_summary()
+    time.sleep(2)
+    
+    # Final summary
+    total_signals = len(daily_signals)
+    entered_signals = sum(1 for s in daily_signals if s.get('entry_achieved', False))
+    total_pnl = sum(s.get('final_pnl', 0) for s in daily_signals)
+    
+    final_summary = f"""
+🏁 DAY TRADING SUMMARY
+─────────────────────────────
+📅 Date: {datetime.now().strftime('%d-%b-%Y')}
+📈 Total Signals: {total_signals}
+✅ Signals Entered: {entered_signals}
+💰 Total P&L: ₹{total_pnl:+.2f}
+🎯 Most Profitable Strategy: {max(strategy_performance.items(), key=lambda x: x[1]['total_pnl'])[0] if strategy_performance else 'N/A'}
+─────────────────────────────
+"""
+    send_telegram(final_summary)
+
+# 🚨 ENHANCED SIGNAL SENDING WITH STRATEGY TRACKING 🚨
+def send_signal(index, side, df, fakeout, strategy_name):
     global signal_counter
     
     # Get ACTUAL index price where pattern was detected
@@ -1308,23 +1451,32 @@ def send_signal(index, side, df, fakeout):
         "timestamp": datetime.now().strftime("%H:%M:%S"),
         "index": index,
         "strike": strike,
-        "option_type": side,  # 🚨 NOW INCLUDES CE/PE
+        "option_type": side,
         "entry_price": entry,
         "targets": targets,
         "sl": sl,
         "fakeout": fakeout,
         "index_price": signal_detection_price,
-        "max_price_reached": entry
+        "max_price_reached": entry,
+        "strategy": strategy_name,
+        "entry_achieved": False,
+        "targets_hit": [],
+        "final_pnl": 0,
+        "trade_completed": False
     }
     daily_signals.append(signal_data)
     
-    # 🚨 FIXED SIGNAL FORMAT - NOW INCLUDES CE/PE
-    msg = (f"{index} {strike} {side}\n"  # 🚨 ADDED CE/PE
+    # Update strategy performance tracking
+    strategy_performance[strategy_name]["total"] += 1
+    
+    # 🚨 ORIGINAL SIGNAL FORMAT (KEEPING YOUR STYLE)
+    msg = (f"{index} {strike} {side}\n"
            f"ABOVE {entry}\n"
            f"TARGETS: {targets_str}\n"
            f"SL: {sl}\n"
            f"FAKEOUT: {'YES' if fakeout else 'NO'}\n"
-           f"SIGNAL ID: {signal_id}")  # 🚨 ADDED SIGNAL ID
+           f"STRATEGY: {strategy_name}\n"
+           f"SIGNAL ID: {signal_id}")
          
     thread_id = send_telegram(msg)
     
@@ -1337,28 +1489,33 @@ def send_signal(index, side, df, fakeout):
         "targets": targets, 
         "thread": thread_id, 
         "status": "OPEN",
-        "index": index
+        "index": index,
+        "strategy": strategy_name,
+        "signal_id": signal_id
     }
     
     # Start monitoring in SEPARATE thread (non-blocking)
-    monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id)
+    monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_name, signal_id)
 
-# --------- THREAD FUNCTION ---------
+# --------- UPDATED THREAD FUNCTION WITH STRATEGY TRACKING ---------
 def trade_thread(index):
     """Generate signals without blocking on active trades"""
-    sig = analyze_index_signal(index)
+    result = analyze_index_signal(index)
     side = None
     fakeout = False
     df = None
+    strategy_name = "UNKNOWN"
     
-    if sig: 
-        if isinstance(sig, tuple) and len(sig) == 3:
-            side, df, fakeout = sig
-        elif isinstance(sig, tuple) and len(sig) == 2:
-            side, df = sig
+    if result: 
+        if isinstance(result, tuple) and len(result) == 4:
+            side, df, fakeout, strategy_name = result
+        elif isinstance(result, tuple) and len(result) == 3:
+            side, df, fakeout = result
+        elif isinstance(result, tuple) and len(result) == 2:
+            side, df = result
             fakeout = False
         else:
-            side = sig
+            side = result
 
     df5 = fetch_index_data(index, "5m", "2d")
     inst_signal = institutional_flow_signal(index, df5) if df5 is not None else None
@@ -1368,13 +1525,13 @@ def trade_thread(index):
     if final_signal == "BOTH":
         for s in ["CE", "PE"]:
             if institutional_flow_confirm(index, s, df5):
-                send_signal(index, s, df, fakeout)
+                send_signal(index, s, df, fakeout, strategy_name)
         return
     elif final_signal:
         if df is None: 
             df = df5
         if institutional_flow_confirm(index, final_signal, df5):
-            send_signal(index, final_signal, df, fakeout)
+            send_signal(index, final_signal, df, fakeout, strategy_name)
     else:
         return
 
@@ -1385,13 +1542,17 @@ def run_algo_parallel():
         return
         
     if should_stop_trading():
-        global STOP_SENT
+        global STOP_SENT, EOD_REPORT_SENT
         if not STOP_SENT:
-            # Generate end of day report
-            report = generate_end_of_day_report()
-            send_telegram(report)
             send_telegram("🛑 Market closed at 3:30 PM IST - Algorithm stopped")
             STOP_SENT = True
+            
+        # Send EOD reports only once
+        if not EOD_REPORT_SENT and daily_signals:
+            time.sleep(5)  # Wait for final monitoring updates
+            send_end_of_day_reports()
+            EOD_REPORT_SENT = True
+            
         return
         
     threads = []
@@ -1409,6 +1570,10 @@ def run_algo_parallel():
 STARTED_SENT = False
 STOP_SENT = False
 MARKET_CLOSED_SENT = False
+EOD_REPORT_SENT = False
+
+# Initialize strategy tracking
+initialize_strategy_tracking()
 
 while True:
     try:
@@ -1421,6 +1586,7 @@ while True:
                 send_telegram("🔴 Market is currently closed. Algorithm waiting for 9:15 AM...")
                 MARKET_CLOSED_SENT = True
                 STOP_SENT = False
+                EOD_REPORT_SENT = False
             
             # Just sleep, don't send repeated messages
             time.sleep(30)
@@ -1432,19 +1598,25 @@ while True:
                          "✅ CE/PE Identification in Every Signal\n"
                          "✅ End-of-Day Performance Report\n"  
                          "✅ Max Price Reached Tracking\n"
+                         "✅ Strategy-wise Performance Analysis\n"
                          "✅ Real-time Trade Monitoring")
             STARTED_SENT = True
             STOP_SENT = False
             MARKET_CLOSED_SENT = False  # Reset for next day
+            EOD_REPORT_SENT = False     # Reset for next day
             
         if should_stop_trading():
             if not STOP_SENT:
-                # Generate final report before stopping
-                report = generate_end_of_day_report()
-                send_telegram(report)
                 send_telegram("🛑 Market closing time reached - Algorithm stopped automatically")
                 STOP_SENT = True
                 STARTED_SENT = False
+                
+                # Send EOD reports
+                if daily_signals and not EOD_REPORT_SENT:
+                    time.sleep(5)  # Wait for final monitoring updates
+                    send_end_of_day_reports()
+                    EOD_REPORT_SENT = True
+                    
             # Don't break, just sleep until next day
             time.sleep(60)
             continue
