@@ -105,7 +105,8 @@ def initialize_strategy_tracking():
         "PULLBACK REVERSAL": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
         "ORDERFLOW MIMIC": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
         "BOTTOM FISHING": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
-        "LIQUIDITY ZONE": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0}
+        "LIQUIDITY ZONE": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
+        "UNKNOWN": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0}  # 🚨 CRITICAL FIX: Added UNKNOWN strategy
     }
 
 # Initialize tracking
@@ -670,7 +671,7 @@ def detect_faulty_bases(df):
         return None
     return None
 
-# 🚨 LAYER 10: WYCKOFF SCHEMATIC 🚨
+# 🚨 LAYER 10: WYCKOFF SCHEMATICS 🚨
 def detect_wyckoff_schematic(df):
     try:
         high = ensure_series(df['High'])
@@ -1409,6 +1410,15 @@ def send_end_of_day_reports():
 # 🚨 ENHANCED SIGNAL SENDING WITH STRATEGY TRACKING 🚨
 def send_signal(index, side, df, fakeout, strategy_name):
     global signal_counter
+    
+    # 🚨 CRITICAL FIX: Ensure strategy exists in performance tracking
+    if strategy_name not in strategy_performance:
+        strategy_performance[strategy_name] = {
+            "total": 0, 
+            "success_2_targets": 0, 
+            "success_3_4_targets": 0, 
+            "total_pnl": 0
+        }
     
     # Get ACTUAL index price where pattern was detected
     signal_detection_price = float(ensure_series(df["Close"]).iloc[-1])
