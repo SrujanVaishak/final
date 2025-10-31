@@ -82,6 +82,7 @@ all_generated_signals = []  # Track ALL signals for EOD reporting
 strategy_performance = {}
 signal_counter = 0
 daily_signals = []
+EOD_REPORT_SENT = False  # Global flag for EOD reports
 
 def initialize_strategy_tracking():
     """Initialize strategy performance tracking"""
@@ -106,7 +107,7 @@ def initialize_strategy_tracking():
         "ORDERFLOW MIMIC": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
         "BOTTOM FISHING": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
         "LIQUIDITY ZONE": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0},
-        "UNKNOWN": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0}  # 🚨 CRITICAL FIX: Added UNKNOWN strategy
+        "UNKNOWN": {"total": 0, "success_2_targets": 0, "success_3_4_targets": 0, "total_pnl": 0}
     }
 
 # Initialize tracking
@@ -130,7 +131,6 @@ CHAT_ID = os.getenv("CHAT_ID")
 STARTED_SENT = False
 STOP_SENT = False
 MARKET_CLOSED_SENT = False
-EOD_REPORT_SENT = False
 
 def send_telegram(msg, reply_to=None):
     try:
@@ -814,7 +814,7 @@ def detect_volume_gap_imbalance(df):
         
         # STRICTER VOLUME GAP CONDITIONS
         if (current_volume > avg_volume * VOLUME_GAP_IMBALANCE and
-            abs(price_change) > 0.004):  # Increased from 0.002
+            abs(price_change) > 0.004):
             if price_change > 0:
                 return "CE"
             else:
@@ -842,13 +842,13 @@ def detect_ote_retracement(df):
         for level in OTE_RETRACEMENT_LEVELS:
             ote_level = swing_high - (swing_range * level)
             
-            if (abs(current_price - ote_level) / ote_level < 0.0015 and  # Tighter tolerance
+            if (abs(current_price - ote_level) / ote_level < 0.0015 and
                 close.iloc[-1] > close.iloc[-2] and
                 close.iloc[-1] > close.iloc[-3]):
                 return "CE"
                 
             ote_level = swing_low + (swing_range * level)
-            if (abs(current_price - ote_level) / ote_level < 0.0015 and  # Tighter tolerance
+            if (abs(current_price - ote_level) / ote_level < 0.0015 and
                 close.iloc[-1] < close.iloc[-2] and
                 close.iloc[-1] < close.iloc[-3]):
                 return "PE"
@@ -879,16 +879,16 @@ def detect_demand_supply_zones(df):
         
         # STRICTER ZONE CONDITIONS
         for zone in significant_demand.iloc[-5:]:
-            if (abs(current_price - zone) / zone < 0.002 and  # Tighter tolerance
+            if (abs(current_price - zone) / zone < 0.002 and
                 close.iloc[-1] > close.iloc[-2] and
-                close.iloc[-1] > close.iloc[-3] and  # Additional confirmation
+                close.iloc[-1] > close.iloc[-3] and
                 volume.iloc[-1] > volume.iloc[-5:].mean() * 1.4):
                 return "CE"
                 
         for zone in significant_supply.iloc[-5:]:
-            if (abs(current_price - zone) / zone < 0.002 and  # Tighter tolerance
+            if (abs(current_price - zone) / zone < 0.002 and
                 close.iloc[-1] < close.iloc[-2] and
-                close.iloc[-1] < close.iloc[-3] and  # Additional confirmation
+                close.iloc[-1] < close.iloc[-3] and
                 volume.iloc[-1] > volume.iloc[-5:].mean() * 1.4):
                 return "PE"
     except Exception:
@@ -914,15 +914,15 @@ def detect_bottom_fishing(index, df):
         vol_ratio = volume.iloc[-1] / (vol_avg if vol_avg > 0 else 1)
 
         # STRICTER BOTTOM FISHING CONDITIONS
-        if wick > body * 2.0 and vol_ratio > 1.5:  # Increased ratios
+        if wick > body * 2.0 and vol_ratio > 1.5:
             for zone in bull_liq:
-                if zone and abs(last_close - zone) <= 3:  # Tighter zone
+                if zone and abs(last_close - zone) <= 3:
                     return "CE"
 
         bear_wick = high.iloc[-1] - last_close
-        if bear_wick > body * 2.0 and vol_ratio > 1.5:  # Increased ratios
+        if bear_wick > body * 2.0 and vol_ratio > 1.5:
             for zone in bear_liq:
-                if zone and abs(last_close - zone) <= 3:  # Tighter zone
+                if zone and abs(last_close - zone) <= 3:
                     return "PE"
     except:
         return None
@@ -989,7 +989,7 @@ def analyze_index_signal(index):
                 oi_flow = oi_delta_flow_signal(index)
                 if institutional_flow_confirm(index, cand, df5):
                     return cand, df5, False, "GAMMA SQUEEZE"
-                if gamma['confidence'] > 0.6 and oi_flow == cand:  # Increased confidence threshold
+                if gamma['confidence'] > 0.6 and oi_flow == cand:
                     return cand, df5, False, "GAMMA SQUEEZE"
     except Exception:
         pass
@@ -1204,8 +1204,9 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_
         final_pnl = 0
         
         while True:
-            if should_stop_trading():
-                # Update signal data before closing - SILENTLY (NO TELEGRAM MESSAGE)
+            # 🚨 CRITICAL FIX: Check if market is closed - STOP ALL MONITORING
+            if not is_market_open():
+                # Update signal data before closing
                 for signal in daily_signals:
                     if signal['signal_id'] == signal_id:
                         signal['max_price_reached'] = max_price_reached
@@ -1214,7 +1215,6 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_
                         signal['entry_achieved'] = entry_price_achieved
                         signal['trade_completed'] = True
                         break
-                # 🚨 REMOVED: No "Market closed - Stopping monitoring" message
                 break
                 
             price = fetch_option_price(symbol)
@@ -1369,12 +1369,12 @@ def send_strategy_performance_summary():
 
 def send_end_of_day_reports():
     """Send all end-of-day reports with proper timing"""
+    global EOD_REPORT_SENT
+    
     try:
         # Wait for all monitoring threads to complete
-        time.sleep(15)
-        
         send_telegram("📊 GENERATING END OF DAY REPORTS...")
-        time.sleep(2)
+        time.sleep(10)  # Give extra time for final updates
         
         # Send individual signal reports
         send_individual_signal_reports()
@@ -1403,6 +1403,7 @@ def send_end_of_day_reports():
         
         # Final confirmation
         send_telegram("✅ REPORTS SENT! Waiting for next day till market open...")
+        EOD_REPORT_SENT = True
         
     except Exception as e:
         send_telegram(f"⚠️ Error generating EOD reports: {e}")
@@ -1559,24 +1560,21 @@ def trade_thread(index):
 
 # --------- MAIN LOOP (ALL INDICES PARALLEL) ---------
 def run_algo_parallel():
+    global EOD_REPORT_SENT
+    
     if not is_market_open(): 
         print("❌ Market closed - skipping iteration")
         return
         
     if should_stop_trading():
-        global STOP_SENT, EOD_REPORT_SENT
+        global STOP_SENT
         if not STOP_SENT:
             send_telegram("🛑 Market closed at 3:30 PM IST - Algorithm stopped")
             STOP_SENT = True
             
-        # Send EOD reports only once - COMPULSORY
+        # 🚨 CRITICAL FIX: Send EOD reports only once - COMPULSORY
         if not EOD_REPORT_SENT:
-            time.sleep(15)  # Wait for all monitoring threads to complete
-            if daily_signals:
-                send_end_of_day_reports()
-            else:
-                send_telegram("📊 END OF DAY REPORT: No signals generated today.")
-                send_telegram("✅ REPORTS SENT! Waiting for next day till market open...")
+            send_end_of_day_reports()
             EOD_REPORT_SENT = True
             
         return
@@ -1637,14 +1635,9 @@ while True:
                 STOP_SENT = True
                 STARTED_SENT = False
                 
-                # Send EOD reports COMPULSORILY
+                # 🚨 CRITICAL FIX: Send EOD reports COMPULSORILY
                 if not EOD_REPORT_SENT:
-                    time.sleep(15)  # Wait for all monitoring threads to complete
-                    if daily_signals:
-                        send_end_of_day_reports()
-                    else:
-                        send_telegram("📊 END OF DAY REPORT: No signals generated today.")
-                        send_telegram("✅ REPORTS SENT! Waiting for next day till market open...")
+                    send_end_of_day_reports()
                     EOD_REPORT_SENT = True
                     
             # Don't break, just sleep until next day
