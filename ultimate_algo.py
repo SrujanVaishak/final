@@ -83,6 +83,7 @@ strategy_performance = {}
 signal_counter = 0
 daily_signals = []
 EOD_REPORT_SENT = False  # Global flag for EOD reports
+stop_all_monitoring = False  # 🚨 NEW: Global stop flag
 
 def initialize_strategy_tracking():
     """Initialize strategy performance tracking"""
@@ -1187,36 +1188,21 @@ def institutional_flow_confirm(index, base_signal, df5):
 
     return True
 
-# --------- ENHANCED TRADE MONITORING AND TRACKING ---------
-active_trades = {}
-
+# 🚨 CRITICAL FIX: UPDATED MONITORING FUNCTION WITH WORKING EOD LOGIC
 def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_name, signal_id):
-    """Run monitoring in separate thread without blocking main signal generation"""
+    """Run monitoring in separate thread - WILL STOP WHEN MARKET CLOSES"""
     def monitoring_thread():
-        global daily_signals, strategy_performance
+        global daily_signals, stop_all_monitoring
         
         last_high = entry
         weakness_sent = False
         in_trade = False
         entry_price_achieved = False
         max_price_reached = entry
-        targets_hit = []
-        final_pnl = 0
+        targets_hit = [False] * len(targets)
         
-        while True:
-            # 🚨 CRITICAL FIX: Check if market is closed - STOP ALL MONITORING
-            if not is_market_open():
-                # Update signal data before closing
-                for signal in daily_signals:
-                    if signal['signal_id'] == signal_id:
-                        signal['max_price_reached'] = max_price_reached
-                        signal['targets_hit'] = targets_hit.copy()
-                        signal['final_pnl'] = final_pnl
-                        signal['entry_achieved'] = entry_price_achieved
-                        signal['trade_completed'] = True
-                        break
-                break
-                
+        # 🚨 FIXED: Use stop_all_monitoring flag instead of complex conditions
+        while not stop_all_monitoring:
             price = fetch_option_price(symbol)
             if not price: 
                 time.sleep(10)
@@ -1234,7 +1220,6 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_
                     in_trade = True
                     entry_price_achieved = True
                     last_high = price
-                    
                     # Update signal data
                     for signal in daily_signals:
                         if signal['signal_id'] == signal_id:
@@ -1250,51 +1235,49 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_
                 
                 # Check all targets
                 for i, target in enumerate(targets):
-                    if price >= target and target not in targets_hit:
-                        targets_hit.append(target)
+                    if price >= target and not targets_hit[i]:
                         send_telegram(f"🎯 {symbol}: Target {i+1} hit at ₹{target}", reply_to=thread_id)
-                        
-                        # Update P&L based on actual targets hit
-                        if targets_hit:
-                            final_pnl = targets_hit[-1] - entry
+                        targets_hit[i] = True
                 
                 if price <= sl:
                     send_telegram(f"🔗 {symbol}: Stop Loss {sl} hit. Exit trade.", reply_to=thread_id)
-                    final_pnl = sl - entry  # Negative P&L
+                    # Update final signal data
+                    for signal in daily_signals:
+                        if signal['signal_id'] == signal_id:
+                            signal.update({
+                                "targets_hit": sum(targets_hit),
+                                "max_price_reached": max_price_reached,
+                                "final_pnl": calculate_pnl(entry, max_price_reached, targets_hit, sl, targets)
+                            })
+                            break
                     break
                     
                 # If all targets hit, exit
-                if len(targets_hit) >= len(targets):
+                if all(targets_hit):
                     send_telegram(f"🏆 {symbol}: ALL TARGETS HIT! Trade completed successfully!", reply_to=thread_id)
-                    final_pnl = targets[-1] - entry  # Max P&L
-                    break
-            
-            # Update signal data continuously
-            for signal in daily_signals:
-                if signal['signal_id'] == signal_id:
-                    signal['max_price_reached'] = max_price_reached
-                    signal['targets_hit'] = targets_hit.copy()
-                    signal['final_pnl'] = final_pnl
+                    # Update final signal data
+                    for signal in daily_signals:
+                        if signal['signal_id'] == signal_id:
+                            signal.update({
+                                "targets_hit": len(targets),
+                                "max_price_reached": max_price_reached,
+                                "final_pnl": calculate_pnl(entry, max_price_reached, targets_hit, sl, targets)
+                            })
+                            break
                     break
             
             time.sleep(10)
         
-        # Final update after trade completion
+        # 🚨 CRITICAL: Final update when thread stops due to stop_all_monitoring
         for signal in daily_signals:
             if signal['signal_id'] == signal_id:
-                signal['max_price_reached'] = max_price_reached
-                signal['targets_hit'] = targets_hit.copy()
-                signal['final_pnl'] = final_pnl
-                signal['trade_completed'] = True
-                
-                # Update strategy performance
-                targets_hit_count = len(targets_hit)
-                if targets_hit_count >= 2:
-                    strategy_performance[strategy_name]["success_2_targets"] += 1
-                if targets_hit_count >= 3:
-                    strategy_performance[strategy_name]["success_3_4_targets"] += 1
-                
-                strategy_performance[strategy_name]["total_pnl"] += final_pnl
+                signal.update({
+                    "entry_achieved": entry_price_achieved,
+                    "targets_hit": sum(targets_hit),
+                    "max_price_reached": max_price_reached,
+                    "final_pnl": calculate_pnl(entry, max_price_reached, targets_hit, sl, targets),
+                    "trade_completed": True
+                })
                 break
     
     # Start monitoring in separate thread
@@ -1302,115 +1285,130 @@ def monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_
     thread.daemon = True
     thread.start()
 
-# --------- ENHANCED REPORTING FUNCTIONS ---------
-def send_individual_signal_reports():
-    """Send individual signal reports in separate messages"""
-    if not daily_signals:
-        send_telegram("📊 END OF DAY REPORT: No signals generated today.")
-        return
-    
-    send_telegram(f"📊 END OF DAY REPORT - {datetime.now().strftime('%d-%b-%Y')}")
-    send_telegram(f"📈 Total Signals: {len(daily_signals)}")
-    
-    for i, signal in enumerate(daily_signals, 1):
-        targets_hit = signal.get('targets_hit', [])
-        targets_hit_count = len(targets_hit)
-        max_price = signal.get('max_price_reached', signal['entry_price'])
-        final_pnl = signal.get('final_pnl', 0)
-        entry_achieved = signal.get('entry_achieved', False)
-        
-        report = f"""
-🔰 SIGNAL #{i} - {signal['index']} {signal['strike']} {signal['option_type']}
-─────────────────────────────
-📅 Date: {datetime.now().strftime('%d-%b-%Y')}
-🕒 Time: {signal['timestamp']}
-📈 Index: {signal['index']}
-🎯 Strike: {signal['strike']}
-🔰 Type: {signal['option_type']}
-🏷️ Strategy: {signal.get('strategy', 'UNKNOWN')}
-
-💰 ENTRY: ₹{signal['entry_price']}
-🎯 TARGETS: {signal['targets'][0]} // {signal['targets'][1]} // {signal['targets'][2]} // {signal['targets'][3]}
-🛑 STOP LOSS: ₹{signal['sl']}
-🚨 FAKEOUT: {signal['fakeout']}
-
-📊 PERFORMANCE:
-• Entry Status: {'ENTERED' if entry_achieved else 'NOT ENTERED'}
-• Targets Hit: {targets_hit_count}/4
-• Targets Achieved: {', '.join(map(str, targets_hit)) if targets_hit else 'None'}
-• Max Price Reached: ₹{max_price}
-• Final P&L: {final_pnl:+.2f} points
-─────────────────────────────
-"""
-        send_telegram(report)
-
-def send_strategy_performance_summary():
-    """Send strategy-wise performance summary"""
-    if not any(stats["total"] > 0 for stats in strategy_performance.values()):
-        return
-    
-    summary = "🎯 STRATEGY PERFORMANCE BREAKDOWN\n"
-    summary += "─────────────────────────────\n"
-    
-    for strategy, stats in strategy_performance.items():
-        if stats["total"] > 0:
-            success_rate_2 = (stats["success_2_targets"] / stats["total"]) * 100 if stats["total"] > 0 else 0
-            success_rate_3_4 = (stats["success_3_4_targets"] / stats["total"]) * 100 if stats["total"] > 0 else 0
-            
-            summary += f"📊 {strategy}:\n"
-            summary += f"   • Signals: {stats['total']}\n"
-            summary += f"   • Success Rate (2+ targets): {success_rate_2:.1f}%\n"
-            summary += f"   • 2+ Targets Hit: {stats['success_2_targets']} ({success_rate_2:.1f}%)\n"
-            summary += f"   • 3-4 Targets Hit: {stats['success_3_4_targets']} ({success_rate_3_4:.1f}%)\n"
-            summary += f"   • Total P&L: ₹{stats['total_pnl']:+.2f}\n"
-            summary += "   ─────────────────────────────\n"
-    
-    send_telegram(summary)
-
-def send_end_of_day_reports():
-    """Send all end-of-day reports with proper timing"""
-    global EOD_REPORT_SENT
-    
+def calculate_pnl(entry, max_price, targets_hit, sl, targets):
+    """Calculate P&L based on targets hit and max price reached"""
     try:
-        # Wait for all monitoring threads to complete
-        send_telegram("📊 GENERATING END OF DAY REPORTS...")
-        time.sleep(10)  # Give extra time for final updates
+        if max_price <= sl:
+            return f"-{entry - sl}"
         
-        # Send individual signal reports
-        send_individual_signal_reports()
-        time.sleep(3)
+        targets_achieved = sum(targets_hit)
+        if targets_achieved == 0:
+            if max_price > entry:
+                return f"+{max_price - entry}"
+            else:
+                return "0"
         
-        # Send strategy performance summary
-        send_strategy_performance_summary()
-        time.sleep(3)
-        
-        # Final summary
-        total_signals = len(daily_signals)
-        entered_signals = sum(1 for s in daily_signals if s.get('entry_achieved', False))
-        total_pnl = sum(s.get('final_pnl', 0) for s in daily_signals)
-        
-        final_summary = f"""
-🏁 DAY TRADING SUMMARY
-─────────────────────────────
-📅 Date: {datetime.now().strftime('%d-%b-%Y')}
-📈 Total Signals: {total_signals}
-✅ Signals Entered: {entered_signals}
-💰 Total P&L: ₹{total_pnl:+.2f}
-🎯 Most Profitable Strategy: {max(strategy_performance.items(), key=lambda x: x[1]['total_pnl'])[0] if strategy_performance and any(stats['total_pnl'] != 0 for stats in strategy_performance.values()) else 'N/A'}
-─────────────────────────────
-"""
-        send_telegram(final_summary)
-        
-        # Final confirmation
-        send_telegram("✅ REPORTS SENT! Waiting for next day till market open...")
-        EOD_REPORT_SENT = True
-        
+        # Calculate average target price for achieved targets
+        achieved_prices = [target for i, target in enumerate(targets) if targets_hit[i]]
+        if achieved_prices:
+            avg_exit = sum(achieved_prices) / len(achieved_prices)
+            return f"+{avg_exit - entry}"
+        else:
+            return "0"
     except Exception as e:
-        send_telegram(f"⚠️ Error generating EOD reports: {e}")
+        return "0"
+
+# 🚨 NEW: WORKING EOD REPORT SYSTEM FROM SECOND CODE
+def send_individual_signal_reports():
+    """Send each signal in separate detailed messages after market hours"""
+    global daily_signals, all_generated_signals
+    
+    # 🚨 CRITICAL FIX: Combine both signal sources
+    all_signals = daily_signals + all_generated_signals
+    
+    # Remove duplicates based on signal_id
+    seen_ids = set()
+    unique_signals = []
+    for signal in all_signals:
+        sid = signal.get('signal_id')
+        if not sid:
+            continue
+        if sid not in seen_ids:
+            seen_ids.add(sid)
+            unique_signals.append(signal)
+    
+    if not unique_signals:
+        send_telegram("📊 END OF DAY REPORT\nNo signals generated today.")
+        return
+    
+    # Send header message
+    send_telegram(f"🕒 END OF DAY SIGNAL REPORT - { (datetime.utcnow()+timedelta(hours=5,minutes=30)).strftime('%d-%b-%Y') }\n"
+                  f"📈 Total Signals: {len(unique_signals)}\n"
+                  f"─────────────────────────────")
+    
+    # Send each signal in separate message
+    for i, signal in enumerate(unique_signals, 1):
+        targets_hit_list = []
+        if signal.get('targets_hit', 0) > 0:
+            for j in range(signal.get('targets_hit', 0)):
+                if j < len(signal.get('targets', [])):
+                    targets_hit_list.append(str(signal['targets'][j]))
+        
+        targets_for_disp = signal.get('targets', [])
+        while len(targets_for_disp) < 4:
+            targets_for_disp.append('-')
+        
+        msg = (f"📊 SIGNAL #{i} - {signal.get('index','?')} {signal.get('strike','?')} {signal.get('option_type','?')}\n"
+               f"─────────────────────────────\n"
+               f"📅 Date: {(datetime.utcnow()+timedelta(hours=5,minutes=30)).strftime('%d-%b-%Y')}\n"
+               f"🕒 Time: {signal.get('timestamp','?')}\n"
+               f"📈 Index: {signal.get('index','?')}\n"
+               f"🎯 Strike: {signal.get('strike','?')}\n"
+               f"🔰 Type: {signal.get('option_type','?')}\n"
+               f"🏷️ Strategy: {signal.get('strategy','?')}\n\n"
+               
+               f"💰 ENTRY: ₹{signal.get('entry_price','?')}\n"
+               f"🎯 TARGETS: {targets_for_disp[0]} // {targets_for_disp[1]} // {targets_for_disp[2]} // {targets_for_disp[3]}\n"
+               f"🛑 STOP LOSS: ₹{signal.get('sl','?')}\n\n"
+               
+               f"📊 PERFORMANCE:\n"
+               f"• Entry Status: {'ENTERED' if signal.get('entry_achieved') else 'NOT ENTERED'}\n"
+               f"• Targets Hit: {signal.get('targets_hit', 0)}/4\n")
+        
+        if targets_hit_list:
+            msg += f"• Targets Achieved: {', '.join(targets_hit_list)}\n"
+        
+        msg += (f"• Max Price Reached: ₹{signal.get('max_price_reached', signal.get('entry_price','?'))}\n"
+                f"• Final P&L: {signal.get('final_pnl', '0')} points\n\n"
+                
+                f"⚡ Fakeout: {'YES' if signal.get('fakeout') else 'NO'}\n"
+                f"📈 Index Price at Signal: {signal.get('index_price','?')}\n"
+                f"🆔 Signal ID: {signal.get('signal_id','?')}\n"
+                f"─────────────────────────────")
+        
+        send_telegram(msg)
+        time.sleep(1)
+    
+    # Send summary
+    total_pnl = 0.0
+    successful_trades = 0
+    for signal in unique_signals:
+        pnl_str = signal.get("final_pnl", "0")
+        try:
+            if isinstance(pnl_str, str) and pnl_str.startswith("+"):
+                total_pnl += float(pnl_str[1:])
+                successful_trades += 1
+            elif isinstance(pnl_str, str) and pnl_str.startswith("-"):
+                total_pnl -= float(pnl_str[1:])
+        except:
+            pass
+    
+    summary_msg = (f"📈 DAY SUMMARY\n"
+                   f"─────────────────────────────\n"
+                   f"• Total Signals: {len(unique_signals)}\n"
+                   f"• Successful Trades: {successful_trades}\n"
+                   f"• Success Rate: {(successful_trades/len(unique_signals))*100:.1f}%\n"
+                   f"• Total P&L: ₹{total_pnl:+.2f}\n"
+                   f"─────────────────────────────")
+    
+    send_telegram(summary_msg)
+    
+    # 🚨 COMPULSORY CONFIRMATION
+    send_telegram("✅ END OF DAY REPORTS COMPLETED! See you tomorrow at 9:15 AM! 🚀")
 
 # 🚨 ENHANCED SIGNAL SENDING WITH STRATEGY TRACKING 🚨
 def send_signal(index, side, df, fakeout, strategy_name):
-    global signal_counter
+    global signal_counter, all_generated_signals
     
     # 🚨 CRITICAL FIX: Ensure strategy exists in performance tracking
     if strategy_name not in strategy_performance:
@@ -1471,7 +1469,7 @@ def send_signal(index, side, df, fakeout, strategy_name):
     
     signal_data = {
         "signal_id": signal_id,
-        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "timestamp": (datetime.utcnow()+timedelta(hours=5,minutes=30)).strftime("%H:%M:%S"),
         "index": index,
         "strike": strike,
         "option_type": side,
@@ -1483,11 +1481,14 @@ def send_signal(index, side, df, fakeout, strategy_name):
         "max_price_reached": entry,
         "strategy": strategy_name,
         "entry_achieved": False,
-        "targets_hit": [],
-        "final_pnl": 0,
+        "targets_hit": 0,
+        "final_pnl": "0",
         "trade_completed": False
     }
     daily_signals.append(signal_data)
+    
+    # 🚨 CRITICAL FIX: Track signal immediately when generated
+    all_generated_signals.append(signal_data.copy())
     
     # Update strategy performance tracking
     strategy_performance[strategy_name]["total"] += 1
@@ -1560,7 +1561,7 @@ def trade_thread(index):
 
 # --------- MAIN LOOP (ALL INDICES PARALLEL) ---------
 def run_algo_parallel():
-    global EOD_REPORT_SENT
+    global EOD_REPORT_SENT, stop_all_monitoring
     
     if not is_market_open(): 
         print("❌ Market closed - skipping iteration")
@@ -1569,12 +1570,16 @@ def run_algo_parallel():
     if should_stop_trading():
         global STOP_SENT
         if not STOP_SENT:
-            send_telegram("🛑 Market closed at 3:30 PM IST - Algorithm stopped")
+            send_telegram("🛑 Market closed at 3:30 PM IST - Stopping all monitoring...")
             STOP_SENT = True
             
-        # 🚨 CRITICAL FIX: Send EOD reports only once - COMPULSORY
+        # 🚨 CRITICAL FIX: STOP ALL MONITORING THREADS FIRST
+        stop_all_monitoring = True
+        time.sleep(30)  # Wait 30 seconds for all threads to stop
+        
+        # 🚨 THEN SEND REPORTS
         if not EOD_REPORT_SENT:
-            send_end_of_day_reports()
+            send_individual_signal_reports()
             EOD_REPORT_SENT = True
             
         return
@@ -1590,64 +1595,86 @@ def run_algo_parallel():
     for t in threads: 
         t.join()
 
-# --------- START ---------
+# 🚨 FIXED MAIN LOOP WITH GUARANTEED EOD REPORTS
 STARTED_SENT = False
 STOP_SENT = False
 MARKET_CLOSED_SENT = False
 EOD_REPORT_SENT = False
+stop_all_monitoring = False  # Reset for new day
 
 # Initialize strategy tracking
 initialize_strategy_tracking()
 
 while True:
     try:
+        # Get current IST time
+        utc_now = datetime.utcnow()
+        ist_now = utc_now + timedelta(hours=5, minutes=30)
+        current_time_ist = ist_now.time()
+        current_datetime_ist = ist_now
+        
         # Check if market is open
         market_open = is_market_open()
         
-        # Market CLOSED behavior - send only ONE message
+        # 🚨 MARKET CLOSED BEHAVIOR
         if not market_open:
-            if not MARKET_CLOSED_SENT and not STARTED_SENT:
+            if not MARKET_CLOSED_SENT:
                 send_telegram("🔴 Market is currently closed. Algorithm waiting for 9:15 AM...")
                 MARKET_CLOSED_SENT = True
+                STARTED_SENT = False
                 STOP_SENT = False
                 EOD_REPORT_SENT = False
+                stop_all_monitoring = False  # Reset for next day
             
-            # Just sleep, don't send repeated messages
+            # 🚨 COMPULSORY EOD REPORT TRIGGER BETWEEN 3:30 PM - 4:00 PM
+            if current_time_ist >= dtime(15,30) and current_time_ist <= dtime(16,0) and not EOD_REPORT_SENT:
+                send_telegram("📊 GENERATING COMPULSORY END-OF-DAY REPORT...")
+                time.sleep(10)
+                send_individual_signal_reports()
+                EOD_REPORT_SENT = True
+                send_telegram("✅ EOD Report completed! Algorithm will resume tomorrow.")
+            
             time.sleep(30)
             continue
         
-        # Market OPEN behavior - original logic
+        # 🚨 MARKET OPEN BEHAVIOR
         if not STARTED_SENT:
-            send_telegram("🚀 GIT ULTIMATE MASTER ALGO STARTED - All 8 Indices Running:\n"
-                         "✅ CE/PE Identification in Every Signal\n"
-                         "✅ End-of-Day Performance Report\n"  
-                         "✅ Max Price Reached Tracking\n"
-                         "✅ Strategy-wise Performance Analysis\n"
-                         "✅ Real-time Trade Monitoring")
+            send_telegram("🚀 GIT ULTIMATE MASTER ALGO STARTED - All 8 Indices Running\n"
+                         "✅ Guaranteed EOD Reports at 3:30 PM\n"
+                         "✅ Real-time Signal Tracking\n"
+                         "✅ Comprehensive P&L Analysis")
             STARTED_SENT = True
             STOP_SENT = False
-            MARKET_CLOSED_SENT = False  # Reset for next day
-            EOD_REPORT_SENT = False     # Reset for next day
-            
+            MARKET_CLOSED_SENT = False
+        
+        # 🚨 MARKET CLOSE DETECTION WITH GUARANTEED EOD REPORT
         if should_stop_trading():
             if not STOP_SENT:
-                send_telegram("🛑 Market closing time reached - Algorithm stopped automatically")
+                send_telegram("🛑 Market closing time reached! Preparing EOD Report...")
                 STOP_SENT = True
                 STARTED_SENT = False
-                
-                # 🚨 CRITICAL FIX: Send EOD reports COMPULSORILY
-                if not EOD_REPORT_SENT:
-                    send_end_of_day_reports()
-                    EOD_REPORT_SENT = True
-                    
-            # Don't break, just sleep until next day
+            
+            # 🚨 GUARANTEED EOD REPORT - NO EXCEPTIONS
+            if not EOD_REPORT_SENT:
+                send_telegram("📊 FINALIZING TRADES...")
+                time.sleep(20)  # Extra time for all threads to complete
+                try:
+                    send_individual_signal_reports()
+                except Exception as e:
+                    send_telegram(f"⚠️ EOD Report Error, retrying: {str(e)[:100]}")
+                    time.sleep(10)
+                    send_individual_signal_reports()  # Retry once
+                EOD_REPORT_SENT = True
+                send_telegram("✅ TRADING DAY COMPLETED! See you tomorrow at 9:15 AM! 🎯")
+            
             time.sleep(60)
             continue
             
-        # Run the main algorithm
+        # 🚨 RUN MAIN ALGORITHM DURING MARKET HOURS
         run_algo_parallel()
         time.sleep(30)
         
     except Exception as e:
-        send_telegram(f"⚠️ Error in main loop: {e}")
+        error_msg = f"⚠️ Main loop error: {str(e)[:100]}"
+        send_telegram(error_msg)
         time.sleep(60)
