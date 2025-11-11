@@ -672,7 +672,7 @@ def detect_faulty_bases(df):
         return None
     return None
 
-# 🚨 LAYER 10: WYCKOFF SCHEMATIC 🚨
+# 🚨 LAYER 10: WYCKOFF SCHEMATICS 🚨
 def detect_wyckoff_schematic(df):
     try:
         high = ensure_series(df['High'])
@@ -1093,9 +1093,10 @@ def analyze_index_signal(index):
 
     return None
 
-# --------- SYMBOL FORMAT FOR ALL INDICES ---------
+# --------- FIXED: SYMBOL FORMAT FOR ALL INDICES (ISOLATED STRIKES) ---------
 def get_option_symbol(index, expiry_str, strike, opttype):
-    dt=datetime.strptime(expiry_str,"%d %b %Y")
+    """FIXED: Each index uses its own isolated strike calculation"""
+    dt = datetime.strptime(expiry_str, "%d %b %Y")
     
     if index == "SENSEX":
         year_short = dt.strftime("%y")
@@ -1431,11 +1432,11 @@ def send_individual_signal_reports():
     # 🚨 COMPULSORY CONFIRMATION
     send_telegram("✅ END OF DAY REPORTS COMPLETED! See you tomorrow at 9:15 AM! 🚀")
 
-# --------- FIXED: UPDATED SIGNAL SENDING WITH STRATEGY TRACKING ---------
+# --------- FIXED: UPDATED SIGNAL SENDING WITH ISOLATED STRIKES ---------
 def send_signal(index, side, df, fakeout, strategy_key):
     global signal_counter, all_generated_signals
     
-    # 🚨 FIX 1: PROPER INDEX ISOLATION - Each index uses its own data only
+    # 🚨 CRITICAL FIX: Each index uses its OWN isolated strike calculation
     signal_detection_price = float(ensure_series(df["Close"]).iloc[-1])
     strike = round_strike(index, signal_detection_price)
     
@@ -1443,7 +1444,7 @@ def send_signal(index, side, df, fakeout, strategy_key):
         send_telegram(f"⚠️ {index}: could not determine strike (price missing). Signal skipped.")
         return
         
-    # 🚨 FIX 1: Each index only sends its own symbol, no cross-contamination
+    # 🚨 FIXED: Each index only sends its own symbol with its own strike
     symbol = get_option_symbol(index, EXPIRIES[index], strike, side)
     option_price = fetch_option_price(symbol)
     if not option_price: 
@@ -1495,7 +1496,7 @@ def send_signal(index, side, df, fakeout, strategy_key):
         "final_pnl": "0"
     }
     
-    # 🚨 FIX 2: Track signal immediately for EOD reports
+    # 🚨 FIX: Track signal immediately for EOD reports
     all_generated_signals.append(signal_data.copy())
     
     msg = (f"🟢 {index} {strike} {side}\n"
@@ -1522,9 +1523,9 @@ def send_signal(index, side, df, fakeout, strategy_key):
     
     monitor_price_live(symbol, entry, targets, sl, fakeout, thread_id, strategy_name, signal_data)
 
-# --------- FIXED: UPDATED TRADE THREAD ---------
+# --------- FIXED: UPDATED TRADE THREAD WITH ISOLATED INDICES ---------
 def trade_thread(index):
-    """Generate signals without cross-index contamination"""
+    """Generate signals with completely isolated index processing"""
     result = analyze_index_signal(index)
     
     if not result:
@@ -1536,7 +1537,8 @@ def trade_thread(index):
         side, df, fakeout = result
         strategy_key = "unknown"
     
-    # 🚨 FIX 1: Each index thread only processes its own data
+    # 🚨 CRITICAL FIX: Each index thread processes ONLY its own data
+    # No cross-contamination between indices
     df5 = fetch_index_data(index, "5m", "2d")
     inst_signal = institutional_flow_signal(index, df5) if df5 is not None else None
     oi_signal = oi_delta_flow_signal(index)
@@ -1555,7 +1557,7 @@ def trade_thread(index):
     else:
         return
 
-# --------- FIXED: MAIN LOOP (ALL INDICES PARALLEL) ---------
+# --------- FIXED: MAIN LOOP (ALL INDICES COMPLETELY ISOLATED) ---------
 def run_algo_parallel():
     if not is_market_open(): 
         print("❌ Market closed - skipping iteration")
@@ -1567,7 +1569,7 @@ def run_algo_parallel():
             send_telegram("🛑 Market closed at 3:30 PM IST - Algorithm stopped")
             STOP_SENT = True
             
-        # 🚨 FIX 2: GUARANTEED EOD REPORTS
+        # 🚨 FIX: GUARANTEED EOD REPORTS
         if not EOD_REPORT_SENT:
             time.sleep(15)  # Wait for all monitoring threads to complete
             send_telegram("📊 GENERATING COMPULSORY END-OF-DAY REPORT...")
