@@ -48,9 +48,9 @@ HAMMER_WICK_TO_BODY_RATIO = 2.0  # Minimum wick-to-body ratio for hammer pattern
 
 # --------- EXPIRIES FOR KEPT INDICES ---------
 EXPIRIES = {
-    "NIFTY": "10 FEB 2026",
+    "NIFTY": "24 FEB 2026",
     "BANKNIFTY": "24 FEB 2026", 
-    "SENSEX": "12 FEB 2026",
+    "SENSEX": "19 FEB 2026",
     "MIDCPNIFTY": "24 FEB 2026"
 }
 
@@ -1184,9 +1184,8 @@ def send_signal(index, side, df, fakeout, strategy_key):
     
     entry = round(option_price)
     
-    high = ensure_series(df["High"])
-    low = ensure_series(df["Low"])
-    close = ensure_series(df["Close"])
+    # 🚨 FIX: Get bull_liq and bear_liq before using them
+    bull_liq, bear_liq = institutional_liquidity_hunt(index, df)
     
     # 🚨 INSTITUTIONAL TARGETS WITH KEY LEVEL CONSIDERATION
     # First analyze key levels
@@ -1196,7 +1195,7 @@ def send_signal(index, side, df, fakeout, strategy_key):
     # Calculate institutional-style targets
     if side == "CE":
         # For CE: Use bullish liquidity zones and key resistance levels
-        if bull_liq:
+        if bull_liq and any(zone is not None for zone in bull_liq):
             nearest_bull_zone = max([z for z in bull_liq if z is not None])
             price_gap = nearest_bull_zone - signal_detection_price
         elif key_levels['nearest_resistance'] is not None:
@@ -1217,7 +1216,7 @@ def send_signal(index, side, df, fakeout, strategy_key):
         
     else:  # PE
         # For PE: Use bearish liquidity zones and key support levels
-        if bear_liq:
+        if bear_liq and any(zone is not None for zone in bear_liq):
             nearest_bear_zone = min([z for z in bear_liq if z is not None])
             price_gap = signal_detection_price - nearest_bear_zone
         elif key_levels['nearest_support'] is not None:
@@ -1235,9 +1234,6 @@ def send_signal(index, side, df, fakeout, strategy_key):
             round(entry + base_move * 4.0)   # Bigger fourth target
         ]
         sl = round(entry - base_move * 0.8)
-    
-    # Get bull and bear liquidity for display
-    bull_liq, bear_liq = institutional_liquidity_hunt(index, df)
     
     targets_str = "//".join(str(t) for t in targets) + "++"
     
