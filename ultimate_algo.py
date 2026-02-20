@@ -1864,7 +1864,7 @@ while True:
                 except Exception as e:
                     send_telegram(f"⚠️ EOD Report Error, retrying: {str(e)[:100]}")
                     time.sleep(10)
-                    send_individual_signal_reports()  # Retry once
+                    send_individual_signal_reports()  # Retry onc
                 EOD_REPORT_SENT = True
                 send_telegram("✅ TRADING DAY COMPLETED! See you tomorrow at 9:15 AM! 🎯")
             
