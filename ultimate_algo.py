@@ -46,10 +46,10 @@ ACCUMULATION_DAYS_LOOKBACK = 10
 
 # --------- EXPIRIES FOR KEPT INDICES ---------
 EXPIRIES = {
-    "NIFTY": "24 Feb 2026",
-    "BANKNIFTY": "24 Feb 2026", 
-    "SENSEX": "26 Feb 2026",
-    "MIDCPNIFTY": "24 Feb 2026"
+    "NIFTY": "02 Mar 2026",
+    "BANKNIFTY": "30 Mar 2026", 
+    "SENSEX": "05 Mar 2026",
+    "MIDCPNIFTY": "30 Mar 2026"
 }
 
 # --------- STRATEGY TRACKING ---------
