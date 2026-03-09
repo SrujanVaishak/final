@@ -1,4 +1,4 @@
-#INDEXBASED + EOD NOT COMMING - FIXED VERSION + AUTO NEAREST EXPIRY
+#INDEXBASED + EOD NOT COMMING - FIXED VERSION
 
 import os
 import time
@@ -13,7 +13,6 @@ from datetime import datetime, time as dtime, timedelta
 from SmartApi.smartConnect import SmartConnect
 import threading
 import numpy as np
-from calendar import month_abbr
 
 warnings.filterwarnings("ignore")
 
@@ -45,60 +44,13 @@ ACCUMULATION_VOLUME_RATIO = 2.0
 ACCUMULATION_PRICE_RANGE = 0.02
 ACCUMULATION_DAYS_LOOKBACK = 10
 
-# --------- AUTO EXPIRY FETCHING ---------
-def get_nearest_expiry_date(index):
-    """
-    Automatically fetches the nearest weekly expiry date for the given index
-    """
-    try:
-        # Get current date in IST
-        utc_now = datetime.utcnow()
-        ist_now = utc_now + timedelta(hours=5, minutes=30)
-        today = ist_now.date()
-        
-        # Define expiry days for different indices
-        expiry_days = {
-            "NIFTY": 3,        # Thursday
-            "BANKNIFTY": 3,    # Thursday
-            "SENSEX": 4,       # Friday
-            "MIDCPNIFTY": 3    # Thursday
-        }
-        
-        target_weekday = expiry_days.get(index, 3)  # Default to Thursday
-        
-        # Calculate days until next expiry (considering current day)
-        days_ahead = target_weekday - today.weekday()
-        if days_ahead <= 0 or (days_ahead == 0 and ist_now.hour >= 15):  # If today is expiry and after 3 PM, get next week
-            days_ahead += 7
-            
-        # Calculate next expiry date
-        next_expiry = today + timedelta(days=days_ahead)
-        
-        # Format date as "DD Mon YYYY" (e.g., "12 Mar 2026")
-        formatted_date = next_expiry.strftime("%d %b %Y")
-        
-        print(f"📅 Auto-detected {index} expiry: {formatted_date} (Weekday: {next_expiry.strftime('%A')})")
-        return formatted_date
-        
-    except Exception as e:
-        print(f"❌ Error detecting expiry for {index}: {e}")
-        # Fallback to default expiry (next Thursday)
-        fallback = (datetime.now() + timedelta((3 - datetime.now().weekday()) % 7)).strftime("%d %b %Y")
-        return fallback
-
-# --------- DYNAMIC EXPIRIES DICTIONARY ---------
-def update_all_expiries():
-    """Update all index expiries dynamically"""
-    indices = ["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY"]
-    expiries = {}
-    
-    for index in indices:
-        expiries[index] = get_nearest_expiry_date(index)
-    
-    return expiries
-
-# Initialize dynamic expiries
-EXPIRIES = update_all_expiries()
+# --------- EXPIRIES FOR KEPT INDICES ---------
+EXPIRIES = {
+    "NIFTY": "10 MAR 2026",
+    "BANKNIFTY": "30 MAR 2026", 
+    "SENSEX": "12 MAR 2026",
+    "MIDCPNIFTY": "30 MAR 2026"
+}
 
 # --------- STRATEGY TRACKING ---------
 STRATEGY_NAMES = {
@@ -271,15 +223,17 @@ def fetch_option_price(symbol, retries=3, delay=3):
             time.sleep(delay)
     return None
 
-# 🚨 FIXED: STRICT EXPIRY VALIDATION FUNCTIONS WITH AUTO EXPIRY 🚨
+# 🚨 FIXED: STRICT EXPIRY VALIDATION FUNCTIONS 🚨
 def validate_option_symbol(index, symbol, strike, opttype):
-    """STRICT validation to ensure ONLY current expiry symbols are used"""
+    """STRICT validation to ensure ONLY specified expiry symbols are used"""
     try:
-        # Get the current expiry for this index (always fresh)
-        current_expiry = get_nearest_expiry_date(index)
-        
+        # Get the expected expiry for this index
+        expected_expiry = EXPIRIES.get(index)
+        if not expected_expiry:
+            return False
+            
         # Parse expected expiry date
-        expected_dt = datetime.strptime(current_expiry, "%d %b %Y")
+        expected_dt = datetime.strptime(expected_expiry, "%d %b %Y")
         
         # STRICT CHECK: For SENSEX: SENSEX25NOV25000CE format
         if index == "SENSEX":
@@ -311,13 +265,11 @@ def validate_option_symbol(index, symbol, strike, opttype):
         print(f"Symbol validation error: {e}")
         return False
 
-# 🚨 FIXED: GET OPTION SYMBOL WITH AUTO EXPIRY VALIDATION 🚨
+# 🚨 FIXED: GET OPTION SYMBOL WITH STRICT EXPIRY VALIDATION 🚨
 def get_option_symbol(index, expiry_str, strike, opttype):
-    """Generates symbols with auto-validated current expiry"""
+    """STRICTLY generates symbols ONLY with specified expiries"""
     try:
-        # Always use fresh expiry for each call
-        current_expiry = get_nearest_expiry_date(index)
-        dt = datetime.strptime(current_expiry, "%d %b %Y")
+        dt = datetime.strptime(expiry_str, "%d %b %Y")
         
         if index == "SENSEX":
             year_short = dt.strftime("%y")  # 25
@@ -331,7 +283,7 @@ def get_option_symbol(index, expiry_str, strike, opttype):
         
         # STRICT VALIDATION: Validate the generated symbol
         if validate_option_symbol(index, symbol, strike, opttype):
-            print(f"✅ Valid symbol generated: {symbol} (Expiry: {current_expiry})")
+            print(f"✅ Valid symbol generated: {symbol}")
             return symbol
         else:
             print(f"❌ Generated symbol validation FAILED: {symbol}")
@@ -559,8 +511,8 @@ def institutional_opening_play(index, df):
 # 🚨 LAYER 2: GAMMA SQUEEZE / EXPIRY LAYER 🚨
 def is_expiry_day_for_index(index):
     try:
-        # Always get fresh expiry
-        ex = get_nearest_expiry_date(index)
+        ex = EXPIRIES.get(index)
+        if not ex: return False
         dt = datetime.strptime(ex, "%d %b %Y")
         today = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
         return dt.date() == today
@@ -1123,15 +1075,6 @@ def clear_completed_signal(signal_id):
     global active_strikes
     active_strikes = {k: v for k, v in active_strikes.items() if v['signal_id'] != signal_id}
 
-# --------- AUTO EXPIRY UPDATE FUNCTION ---------
-def refresh_expiries():
-    """Refresh all expiries at market open and after 3:30 PM for next day"""
-    global EXPIRIES
-    new_expiries = update_all_expiries()
-    EXPIRIES = new_expiries
-    print(f"🔄 Expiries refreshed: {EXPIRIES}")
-    return EXPIRIES
-
 # --------- UPDATED STRATEGY CHECK WITH INSTITUTIONAL LAYERS ---------
 def analyze_index_signal(index):
     df5 = fetch_index_data(index, "5m", "2d")
@@ -1646,7 +1589,7 @@ def send_individual_signal_reports():
     # 🚨 COMPULSORY CONFIRMATION
     send_telegram("✅ END OF DAY REPORTS COMPLETED! See you tomorrow at 9:15 AM! 🚀")
 
-# 🚨 FIXED: UPDATED SIGNAL SENDING WITH AUTO EXPIRY VALIDATION 🚨
+# 🚨 FIXED: UPDATED SIGNAL SENDING WITH STRICT EXPIRY VALIDATION 🚨
 def send_signal(index, side, df, fakeout, strategy_key):
     global signal_counter, all_generated_signals
     
@@ -1662,13 +1605,12 @@ def send_signal(index, side, df, fakeout, strategy_key):
     if not can_send_signal(index, strike, side):
         return
         
-    # 🚨 FIXED: AUTO EXPIRY - Always use current nearest expiry
-    current_expiry = get_nearest_expiry_date(index)
-    symbol = get_option_symbol(index, current_expiry, strike, side)
+    # 🚨 FIXED: STRICT EXPIRY ENFORCEMENT - Only use specified expiries
+    symbol = get_option_symbol(index, EXPIRIES[index], strike, side)
     
     if symbol is None:
         # 🚨 SILENT REJECTION - No Telegram message for wrong expiry!
-        print(f"❌ AUTO EXPIRY ENFORCEMENT: {index} {strike}{side} - Only {current_expiry} allowed")
+        print(f"❌ STRICT EXPIRY ENFORCEMENT: {index} {strike}{side} - Only {EXPIRIES[index]} allowed")
         return  # Just exit quietly without sending any message
     
     option_price = fetch_option_price(symbol)
@@ -1757,7 +1699,6 @@ def send_signal(index, side, df, fakeout, strategy_key):
     
     msg = (f"🟢 {index} {strike} {side}\n"
            f"SYMBOL: {symbol}\n"
-           f"EXPIRY: {current_expiry}\n"
            f"ABOVE {entry}\n"
            f"TARGETS: {targets_str}\n"
            f"SL: {sl}\n"
@@ -1815,7 +1756,7 @@ def trade_thread(index):
     else:
         return
 
-# --------- FIXED: MAIN LOOP WITH AUTO EXPIRY REFRESH ---------
+# --------- FIXED: MAIN LOOP (KEPT INDICES ONLY) ---------
 def run_algo_parallel():
     if not is_market_open(): 
         print("❌ Market closed - skipping iteration")
@@ -1854,7 +1795,7 @@ def run_algo_parallel():
     for t in threads: 
         t.join()
 
-# --------- FIXED: START WITH WORKING EOD SYSTEM AND AUTO EXPIRY ---------
+# --------- FIXED: START WITH WORKING EOD SYSTEM ---------
 STARTED_SENT = False
 STOP_SENT = False
 MARKET_CLOSED_SENT = False
@@ -1863,12 +1804,6 @@ EOD_REPORT_SENT = False
 # Initialize strategy tracking
 initialize_strategy_tracking()
 
-# Initialize auto expiries
-EXPIRIES = update_all_expiries()
-print(f"✅ Initial Auto Expiries set: {EXPIRIES}")
-
-last_expiry_refresh = datetime.now()
-
 while True:
     try:
         # Get current IST time
@@ -1876,13 +1811,6 @@ while True:
         ist_now = utc_now + timedelta(hours=5, minutes=30)
         current_time_ist = ist_now.time()
         current_datetime_ist = ist_now
-        
-        # 🚨 AUTO REFRESH EXPIRIES at start of each day (before 9:15 AM) and after 3:30 PM for next day
-        current_date = ist_now.date()
-        if (current_time_ist < dtime(9,15) or current_time_ist >= dtime(15,30)):
-            if (datetime.now() - last_expiry_refresh).total_seconds() > 3600:  # Refresh every hour when market closed
-                EXPIRIES = refresh_expiries()
-                last_expiry_refresh = datetime.now()
         
         # Check if market is open
         market_open = is_market_open()
@@ -1909,15 +1837,13 @@ while True:
         
         # 🚨 MARKET OPEN BEHAVIOR
         if not STARTED_SENT:
-            # Refresh expiries at market open
-            EXPIRIES = refresh_expiries()
             send_telegram("🚀 GIT ULTIMATE MASTER ALGO STARTED - 4 Indices Running\n"
-                         "✅ AUTO NEAREST EXPIRY ENABLED - No manual updates needed!\n"
-                         f"✅ Current Expiries: NIFTY={EXPIRIES['NIFTY']}, BANKNIFTY={EXPIRIES['BANKNIFTY']}, SENSEX={EXPIRIES['SENSEX']}, MIDCPNIFTY={EXPIRIES['MIDCPNIFTY']}\n"
+                         "✅ Removed unwanted indices - Only NIFTY, BANKNIFTY, SENSEX, MIDCPNIFTY\n"
                          "✅ Institutional Targets with Bigger Moves\n"
                          "✅ Expiry Day Gamma Blast After 1 PM\n"
                          "✅ Signal Deduplication & Cooldown\n"
-                         "✅ Guaranteed EOD Reports at 3:30 PM")
+                         "✅ Guaranteed EOD Reports at 3:30 PM\n"
+                         "✅ 🚨 STRICT EXPIRY ENFORCEMENT - ONLY SPECIFIED EXPIRIES ALLOWED 🚨")
             STARTED_SENT = True
             STOP_SENT = False
             MARKET_CLOSED_SENT = False
