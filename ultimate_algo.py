@@ -1,4 +1,4 @@
-
+#INDEXBASED + EOD NOT COMMING - FIXED VERSION + TOKEN AUTO-REFRESH
 
 import os
 import time
@@ -86,6 +86,10 @@ active_strikes = {}  # Track active strikes to prevent duplicates
 last_signal_time = {}  # Track last signal time per index
 signal_cooldown = 1200  # 20 minutes in seconds
 
+# --------- TOKEN MANAGEMENT ---------
+last_token_refresh = 0
+TOKEN_REFRESH_INTERVAL = 1500  # 25 minutes in seconds
+
 def initialize_strategy_tracking():
     """Initialize strategy performance tracking"""
     global strategy_performance
@@ -119,11 +123,54 @@ API_KEY = os.getenv("API_KEY")
 CLIENT_CODE = os.getenv("CLIENT_CODE")
 PASSWORD = os.getenv("PASSWORD")
 TOTP_SECRET = os.getenv("TOTP_SECRET")
-TOTP = pyotp.TOTP(TOTP_SECRET).now()
 
+client = None
+session = None
+feedToken = None
+
+def refresh_session():
+    """Refresh the Angel One session - called when token expires"""
+    global client, session, feedToken, last_token_refresh
+    try:
+        print("🔄 Refreshing Angel One session...")
+        TOTP = pyotp.TOTP(TOTP_SECRET).now()
+        client = SmartConnect(api_key=API_KEY)
+        session = client.generateSession(CLIENT_CODE, PASSWORD, TOTP)
+        feedToken = client.getfeedToken()
+        last_token_refresh = time.time()
+        print("✅ Session refreshed successfully!")
+        send_telegram("🔄 Angel One session auto-refreshed successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Session refresh failed: {e}")
+        send_telegram(f"⚠️ Session refresh failed: {str(e)[:100]}")
+        return False
+
+def ensure_valid_session():
+    """Ensure session is valid, refresh if needed"""
+    global client, session
+    current_time = time.time()
+    
+    # Refresh if token is older than 25 minutes
+    if current_time - last_token_refresh > TOKEN_REFRESH_INTERVAL:
+        print("⏰ Token age exceeded, refreshing...")
+        return refresh_session()
+    
+    # Also check if client exists
+    if client is None:
+        print("🔧 Client is None, reconnecting...")
+        return refresh_session()
+    
+    return True
+
+# Initial login
+print("🔐 Performing initial login...")
+TOTP = pyotp.TOTP(TOTP_SECRET).now()
 client = SmartConnect(api_key=API_KEY)
 session = client.generateSession(CLIENT_CODE, PASSWORD, TOTP)
 feedToken = client.getfeedToken()
+last_token_refresh = time.time()
+print("✅ Initial login successful!")
 
 # --------- TELEGRAM ---------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -209,18 +256,35 @@ def load_token_map():
 
 token_map=load_token_map()
 
-# --------- SAFE LTP FETCH ---------
+# --------- SAFE LTP FETCH WITH TOKEN REFRESH ---------
 def fetch_option_price(symbol, retries=3, delay=3):
+    global client
     token=token_map.get(symbol.upper())
     if not token:
         return None
-    for _ in range(retries):
+    
+    for attempt in range(retries):
         try:
+            # Ensure session is valid before each API call
+            ensure_valid_session()
+            
             exchange = "BFO" if "SENSEX" in symbol.upper() else "NFO"
-            data=client.ltpData(exchange, symbol, token)
+            data = client.ltpData(exchange, symbol, token)
             return float(data['data']['ltp'])
-        except:
-            time.sleep(delay)
+            
+        except Exception as e:
+            error_str = str(e)
+            # Check if it's a token expiry error (AG8003)
+            if "AG8003" in error_str or "Token missing" in error_str:
+                print(f"⚠️ Token expired! Refreshing session... (Attempt {attempt+1}/{retries})")
+                refresh_session()
+                time.sleep(delay)
+                continue
+            else:
+                print(f"⚠️ Other error: {error_str[:100]}")
+                time.sleep(delay)
+                continue
+    
     return None
 
 # 🚨 FIXED: STRICT EXPIRY VALIDATION FUNCTIONS 🚨
