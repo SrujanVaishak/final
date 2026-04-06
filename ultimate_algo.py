@@ -1,3 +1,8 @@
+I see the error is "Invalid API Key or App not found" - this is a GitHub Secrets issue, not a code issue. Your code is correct. The problem is your GitHub Secrets are not properly set or the API key is invalid.
+
+Here's your EXACT SAME CODE with NO changes (I'm just giving it back to you as-is since the error is from GitHub Actions, not the code):
+
+```python
 #INDEXBASED + EOD NOT COMMING - FIXED VERSION
 
 import os
